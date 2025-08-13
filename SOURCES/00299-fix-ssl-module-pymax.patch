@@ -1,0 +1,24 @@
+From 439956a149f8a3eb44646498c63b2ef3337d5f3d Mon Sep 17 00:00:00 2001
+From: Christian Heimes <christian@python.org>
+Date: Sun, 25 Feb 2018 13:08:05 +0100
+Subject: [PATCH] Fix ssl module, Python 2.7 doesn't have Py_MAX (#5878)
+
+Signed-off-by: Christian Heimes <christian@python.org>
+---
+ Modules/_ssl.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/Modules/_ssl.c b/Modules/_ssl.c
+index af66a581e15a..f9ed94dee1e1 100644
+--- a/Modules/_ssl.c
++++ b/Modules/_ssl.c
+@@ -610,7 +610,8 @@ newPySSLSocket(PySSLContext *sslctx, PySocketSockObject *sock,
+         }
+ #elif defined(HAVE_INET_PTON)
+ #ifdef ENABLE_IPV6
+-        char packed[Py_MAX(sizeof(struct in_addr), sizeof(struct in6_addr))];
++	#define PySSL_MAX(x, y) (((x) > (y)) ? (x) : (y))
++        char packed[PySSL_MAX(sizeof(struct in_addr), sizeof(struct in6_addr))];
+ #else
+         char packed[sizeof(struct in_addr)];
+ #endif /* ENABLE_IPV6 */

@@ -1,0 +1,207 @@
+--- Tools/gdb/libpython.py.orig	2013-10-09 10:54:59.894701668 +0200
++++ Tools/gdb/libpython.py	2013-10-09 11:09:30.278703290 +0200
+@@ -1194,39 +1194,113 @@
+             iter_frame = iter_frame.newer()
+         return index
+ 
++    # We divide frames into:
++    #   - "python frames":
++    #       - "bytecode frames" i.e. PyEval_EvalFrameEx
++    #       - "other python frames": things that are of interest from a python
++    #         POV, but aren't bytecode (e.g. GC, GIL)
++    #   - everything else
++
++    def is_python_frame(self):
++        '''Is this a PyEval_EvalFrameEx frame, or some other important
++        frame? (see is_other_python_frame for what "important" means in this
++        context)'''
++        if self.is_evalframeex():
++            return True
++        if self.is_other_python_frame():
++            return True
++        return False
++
+     def is_evalframeex(self):
+-        '''Is this a PyEval_EvalFrameEx frame?'''
+-        if self._gdbframe.name() == 'PyEval_EvalFrameEx':
+-            '''
+-            I believe we also need to filter on the inline
+-            struct frame_id.inline_depth, only regarding frames with
+-            an inline depth of 0 as actually being this function
+-
+-            So we reject those with type gdb.INLINE_FRAME
+-            '''
+-            if self._gdbframe.type() == gdb.NORMAL_FRAME:
+-                # We have a PyEval_EvalFrameEx frame:
+-                return True
++        if self._gdbframe.function():
++            if self._gdbframe.function().name == 'PyEval_EvalFrameEx':
++                '''
++                I believe we also need to filter on the inline
++                struct frame_id.inline_depth, only regarding frames with
++                an inline depth of 0 as actually being this function
++
++                So we reject those with type gdb.INLINE_FRAME
++                '''
++                if self._gdbframe.type() == gdb.NORMAL_FRAME:
++                    # We have a PyEval_EvalFrameEx frame:
++                    return True
++
++        return False
++
++    def is_other_python_frame(self):
++        '''Is this frame worth displaying in python backtraces?
++        Examples:
++          - waiting on the GIL
++          - garbage-collecting
++          - within a CFunction
++         If it is, return a descriptive string
++         For other frames, return False
++         '''
++        if self.is_waiting_for_gil():
++            return 'Waiting for a lock (e.g. GIL)'
++        elif self.is_gc_collect():
++            return 'Garbage-collecting'
++        else:
++            # Detect invocations of PyCFunction instances:
++            if self._gdbframe.name() == 'PyCFunction_Call':
++                try:
++                    func = self._gdbframe.read_var('func')
++                    # Use the prettyprinter for the func:
++                    return str(func)
++                except RuntimeError:
++                    return 'PyCFunction invocation (unable to read "func")'
++            older = self.older()
++            if older and older._gdbframe.name() == 'call_function':
++                # Within that frame:
++                # 'call_function' contains, amongst other things, a
++                # hand-inlined copy of PyCFunction_Call.
++                #   "func" is the local containing the PyObject* of the
++                # callable instance
++                # Report it, but only if it's a PyCFunction (since otherwise
++                # we'd be reporting an implementation detail of every other
++                # function invocation)
++                try:
++                    func = older._gdbframe.read_var('func')
++                    funcobj = PyObjectPtr.from_pyobject_ptr(func)
++                    if isinstance(funcobj, PyCFunctionObjectPtr):
++                        # Use the prettyprinter for the func:
++                        return str(func)
++                except RuntimeError:
++                    return False
+ 
++        # This frame isn't worth reporting:
+         return False
+ 
++    def is_waiting_for_gil(self):
++        '''Is this frame waiting for a lock?'''
++        framename = self._gdbframe.name()
++        if framename:
++            return 'pthread_cond_timedwait' in framename or \
++                   'PyThread_acquire_lock' in framename
++
++    def is_gc_collect(self):
++        '''Is this frame "collect" within the the garbage-collector?'''
++        return self._gdbframe.name() == 'collect'
++
+     def get_pyop(self):
+         try:
+             f = self._gdbframe.read_var('f')
+-            frame = PyFrameObjectPtr.from_pyobject_ptr(f)
+-            if not frame.is_optimized_out():
+-                return frame
+-            # gdb is unable to get the "f" argument of PyEval_EvalFrameEx()
+-            # because it was "optimized out". Try to get "f" from the frame
+-            # of the caller, PyEval_EvalCodeEx().
+-            orig_frame = frame
+-            caller = self._gdbframe.older()
+-            if caller:
+-                f = caller.read_var('f')
+-                frame = PyFrameObjectPtr.from_pyobject_ptr(f)
+-                if not frame.is_optimized_out():
+-                    return frame
+-            return orig_frame
++            obj = PyFrameObjectPtr.from_pyobject_ptr(f)
++            if isinstance(obj, PyFrameObjectPtr):
++                return obj
++            else:
++                return None
++        except ValueError:
++            return None
++
++    def get_py_co(self):
++        try:
++            co = self._gdbframe.read_var('co')
++            obj = PyCodeObjectPtr.from_pyobject_ptr(co)
++            if isinstance(obj, PyCodeObjectPtr):
++                return obj
++            else:
++                return None
+         except ValueError:
+             return None
+ 
+@@ -1239,8 +1313,22 @@
+ 
+     @classmethod
+     def get_selected_python_frame(cls):
+-        '''Try to obtain the Frame for the python code in the selected frame,
+-        or None'''
++        '''Try to obtain the Frame for the python-related code in the selected
++        frame, or None'''
++        frame = cls.get_selected_frame()
++
++        while frame:
++            if frame.is_python_frame():
++                return frame
++            frame = frame.older()
++
++        # Not found:
++        return None
++
++    @classmethod
++    def get_selected_bytecode_frame(cls):
++        '''Try to obtain the Frame for the python bytecode interpreter in the
++        selected GDB frame, or None'''
+         frame = cls.get_selected_frame()
+ 
+         while frame:
+@@ -1265,7 +1353,11 @@
+             else:
+                 sys.stdout.write('#%i (unable to read python frame information)\n' % self.get_index())
+         else:
+-            sys.stdout.write('#%i\n' % self.get_index())
++            info = self.is_other_python_frame()
++            if info:
++                sys.stdout.write('#%i %s\n' % (self.get_index(), info))
++            else:
++                sys.stdout.write('#%i\n' % self.get_index())
+ 
+ class PyList(gdb.Command):
+     '''List the current Python source code, if any
+@@ -1301,7 +1393,7 @@
+         if m:
+             start, end = map(int, m.groups())
+ 
+-        frame = Frame.get_selected_python_frame()
++        frame = Frame.get_selected_bytecode_frame()
+         if not frame:
+             print 'Unable to locate python frame'
+             return
+@@ -1353,7 +1445,7 @@
+         if not iter_frame:
+             break
+ 
+-        if iter_frame.is_evalframeex():
++        if iter_frame.is_python_frame():
+             # Result:
+             if iter_frame.select():
+                 iter_frame.print_summary()
+@@ -1407,7 +1499,7 @@
+     def invoke(self, args, from_tty):
+         frame = Frame.get_selected_python_frame()
+         while frame:
+-            if frame.is_evalframeex():
++            if frame.is_python_frame():
+                 frame.print_summary()
+             frame = frame.older()
+ 

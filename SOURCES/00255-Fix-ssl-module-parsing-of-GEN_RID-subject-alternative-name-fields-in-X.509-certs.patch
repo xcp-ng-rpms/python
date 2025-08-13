@@ -1,0 +1,235 @@
+
+# HG changeset patch
+# User Christian Heimes <christian@python.org>
+# Date 1473197135 -7200
+# Node ID 74805fd9e7343649372d0b9c76b4490b2975a674
+# Parent  6f4f19217d9be12be7a9c86cf1e118b140564b4f
+Issue #27691: Fix ssl module's parsing of GEN_RID subject alternative name fields in X.509 certs.
+
+diff --git a/Lib/test/allsans.pem b/Lib/test/allsans.pem
+new file mode 100644
+--- /dev/null
++++ b/Lib/test/allsans.pem
+@@ -0,0 +1,37 @@
++-----BEGIN PRIVATE KEY-----
++MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAOoy7/QOtTjQ0niE
++6uDcTwtkC0R2Tvy1AjVnXohCntZfdzbTGDoYTgXSOLsP8A697jUiJ8VCePGH50xG
++Z4DKnAF3a9O3a9nr2pLXb0iY3XOMv+YEBii7CfI+3oxFYgCl0sMgHzDD2ZTVYAsm
++DWgLUVsE2gHEccRwrM2tPf2EgR+FAgMBAAECgYEA3qyfyYVSeTrTYxO93x6ZaVMu
++A2IZp9zSxMQL9bKiI2GRj+cV2ebSCGbg2btFnD6qBor7FWsmYz+8g6FNN/9sY4az
++61rMqMtQvLBe+7L8w70FeTze4qQ4Y1oQri0qD6tBWhDVlpnbI5Py9bkZKD67yVUk
++elcEA/5x4PrYXkuqsAECQQD80NjT0mDvaY0JOOaQFSEpMv6QiUA8GGX8Xli7IoKb
++tAolPG8rQBa+qSpcWfDMTrWw/aWHuMEEQoP/bVDH9W4FAkEA7SYQbBAKnojZ5A3G
++kOHdV7aeivRQxQk/JN8Fb8oKB9Csvpv/BsuGxPKXHdhFa6CBTTsNRtHQw/szPo4l
++xMIjgQJAPoMxqibR+0EBM6+TKzteSL6oPXsCnBl4Vk/J5vPgkbmR7KUl4+7j8N8J
++b2554TrxKEN/w7CGYZRE6UrRd7ATNQJAWD7Yz41sli+wfPdPU2xo1BHljyl4wMk/
++EPZYbI/PCbdyAH/F935WyQTIjNeEhZc1Zkq6FwdOWw8ns3hrv3rKgQJAHXv1BqUa
++czGPIFxX2TNoqtcl6/En4vrxVB1wzsfzkkDAg98kBl7qsF+S3qujSzKikjeaVbI2
++/CyWR2P3yLtOmA==
++-----END PRIVATE KEY-----
++-----BEGIN CERTIFICATE-----
++MIIDcjCCAtugAwIBAgIJAN5dc9TOWjB7MA0GCSqGSIb3DQEBCwUAMF0xCzAJBgNV
++BAYTAlhZMRcwFQYDVQQHDA5DYXN0bGUgQW50aHJheDEjMCEGA1UECgwaUHl0aG9u
++IFNvZnR3YXJlIEZvdW5kYXRpb24xEDAOBgNVBAMMB2FsbHNhbnMwHhcNMTYwODA1
++MTAyMTExWhcNMjYwODAzMTAyMTExWjBdMQswCQYDVQQGEwJYWTEXMBUGA1UEBwwO
++Q2FzdGxlIEFudGhyYXgxIzAhBgNVBAoMGlB5dGhvbiBTb2Z0d2FyZSBGb3VuZGF0
++aW9uMRAwDgYDVQQDDAdhbGxzYW5zMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKB
++gQDqMu/0DrU40NJ4hOrg3E8LZAtEdk78tQI1Z16IQp7WX3c20xg6GE4F0ji7D/AO
++ve41IifFQnjxh+dMRmeAypwBd2vTt2vZ69qS129ImN1zjL/mBAYouwnyPt6MRWIA
++pdLDIB8ww9mU1WALJg1oC1FbBNoBxHHEcKzNrT39hIEfhQIDAQABo4IBODCCATQw
++ggEwBgNVHREEggEnMIIBI4IHYWxsc2Fuc6AeBgMqAwSgFwwVc29tZSBvdGhlciBp
++ZGVudGlmaWVyoDUGBisGAQUCAqArMCmgEBsOS0VSQkVST1MuUkVBTE2hFTAToAMC
++AQGhDDAKGwh1c2VybmFtZYEQdXNlckBleGFtcGxlLm9yZ4IPd3d3LmV4YW1wbGUu
++b3JnpGcwZTELMAkGA1UEBhMCWFkxFzAVBgNVBAcMDkNhc3RsZSBBbnRocmF4MSMw
++IQYDVQQKDBpQeXRob24gU29mdHdhcmUgRm91bmRhdGlvbjEYMBYGA1UEAwwPZGly
++bmFtZSBleGFtcGxlhhdodHRwczovL3d3dy5weXRob24ub3JnL4cEfwAAAYcQAAAA
++AAAAAAAAAAAAAAAAAYgEKgMEBTANBgkqhkiG9w0BAQsFAAOBgQAy16h+F+nOmeiT
++VWR0fc8F/j6FcadbLseAUaogcC15OGxCl4UYpLV88HBkABOoGCpP155qwWTwOrdG
++iYPGJSusf1OnJEbvzFejZf6u078bPd9/ZL4VWLjv+FPGkjd+N+/OaqMvgj8Lu99f
++3Y/C4S7YbHxxwff6C6l2Xli+q6gnuQ==
++-----END CERTIFICATE-----
+diff --git a/Lib/test/make_ssl_certs.py b/Lib/test/make_ssl_certs.py
+--- a/Lib/test/make_ssl_certs.py
++++ b/Lib/test/make_ssl_certs.py
+@@ -20,7 +20,28 @@ req_template = """
+     CN                     = {hostname}
+ 
+     [req_x509_extensions]
+-    subjectAltName         = DNS:{hostname}
++    subjectAltName         = @san
++
++    [san]
++    DNS.1 = {hostname}
++    {extra_san}
++
++    [dir_sect]
++    C                      = XY
++    L                      = Castle Anthrax
++    O                      = Python Software Foundation
++    CN                     = dirname example
++
++    [princ_name]
++    realm = EXP:0, GeneralString:KERBEROS.REALM
++    principal_name = EXP:1, SEQUENCE:principal_seq
++
++    [principal_seq]
++    name_type = EXP:0, INTEGER:1
++    name_string = EXP:1, SEQUENCE:principals
++
++    [principals]
++    princ1 = GeneralString:username
+ 
+     [ ca ]
+     default_ca      = CA_default
+@@ -67,7 +88,7 @@ req_template = """
+ 
+ here = os.path.abspath(os.path.dirname(__file__))
+ 
+-def make_cert_key(hostname, sign=False):
++def make_cert_key(hostname, sign=False, extra_san=''):
+     print("creating cert for " + hostname)
+     tempnames = []
+     for i in range(3):
+@@ -75,8 +96,9 @@ def make_cert_key(hostname, sign=False):
+             tempnames.append(f.name)
+     req_file, cert_file, key_file = tempnames
+     try:
++        req = req_template.format(hostname=hostname, extra_san=extra_san)
+         with open(req_file, 'w') as f:
+-            f.write(req_template.format(hostname=hostname))
++            f.write(req)
+         args = ['req', '-new', '-days', '3650', '-nodes',
+                 '-newkey', 'rsa:1024', '-keyout', key_file,
+                 '-config', req_file]
+@@ -120,7 +142,7 @@ def make_ca():
+         f.write('unique_subject = no')
+ 
+     with tempfile.NamedTemporaryFile("w") as t:
+-        t.write(req_template.format(hostname='our-ca-server'))
++        t.write(req_template.format(hostname='our-ca-server', extra_san=''))
+         t.flush()
+         with tempfile.NamedTemporaryFile() as f:
+             args = ['req', '-new', '-days', '3650', '-extensions', 'v3_ca', '-nodes',
+@@ -171,6 +193,25 @@ if __name__ == '__main__':
+         f.write(key)
+         f.write(cert)
+ 
++    extra_san = [
++        'otherName.1 = 1.2.3.4;UTF8:some other identifier',
++        'otherName.2 = 1.3.6.1.5.2.2;SEQUENCE:princ_name',
++        'email.1 = user@example.org',
++        'DNS.2 = www.example.org',
++        # GEN_X400
++        'dirName.1 = dir_sect',
++        # GEN_EDIPARTY
++        'URI.1 = https://www.python.org/',
++        'IP.1 = 127.0.0.1',
++        'IP.2 = ::1',
++        'RID.1 = 1.2.3.4.5',
++    ]
++
++    cert, key = make_cert_key('allsans', extra_san='\n'.join(extra_san))
++    with open('allsans.pem', 'w') as f:
++        f.write(key)
++        f.write(cert)
++
+     unmake_ca()
+     print("\n\nPlease change the values in test_ssl.py, test_parse_cert function related to notAfter,notBefore and serialNumber")
+     check_call(['openssl','x509','-in','keycert.pem','-dates','-serial','-noout'])
+diff --git a/Lib/test/test_ssl.py b/Lib/test/test_ssl.py
+diff --git a/Lib/test/test_ssl.py b/Lib/test/test_ssl.py
+index fa59641..9d5816b 100644
+--- a/Lib/test/test_ssl.py
++++ b/Lib/test/test_ssl.py
+@@ -57,6 +57,8 @@ CRLFILE = data_file("revocation.crl")
+ SIGNED_CERTFILE = data_file("keycert3.pem")
+ SIGNED_CERTFILE2 = data_file("keycert4.pem")
+ SIGNING_CA = data_file("pycacert.pem")
++# cert with all kinds of subject alt names
++ALLSANFILE = data_file("allsans.pem")
+ 
+ SVN_PYTHON_ORG_ROOT_CERT = data_file("https_svn_python_org_root.pem")
+ 
+@@ -236,6 +238,28 @@ class BasicSocketTests(unittest.TestCase):
+                          ('IP Address', '2001:DB8:0:0:0:0:0:1\n'))
+                         )
+ 
++    def test_parse_all_sans(self):
++        p = ssl._ssl._test_decode_cert(ALLSANFILE)
++        self.assertEqual(p['subjectAltName'],
++            (
++                ('DNS', 'allsans'),
++                ('othername', '<unsupported>'),
++                ('othername', '<unsupported>'),
++                ('email', 'user@example.org'),
++                ('DNS', 'www.example.org'),
++                ('DirName',
++                    ((('countryName', 'XY'),),
++                    (('localityName', 'Castle Anthrax'),),
++                    (('organizationName', 'Python Software Foundation'),),
++                    (('commonName', 'dirname example'),))),
++                ('URI', 'https://www.python.org/'),
++                ('IP Address', '127.0.0.1'),
++                ('IP Address', '0:0:0:0:0:0:0:1\n'),
++                ('Registered ID', '1.2.3.4.5')
++            )
++        )
++
++
+     def test_DER_to_PEM(self):
+         with open(SVN_PYTHON_ORG_ROOT_CERT, 'r') as f:
+             pem = f.read()
+diff --git a/Modules/_ssl.c b/Modules/_ssl.c
+--- a/Modules/_ssl.c
++++ b/Modules/_ssl.c
+@@ -953,6 +953,35 @@ static PyObject *
+                 PyTuple_SET_ITEM(t, 1, v);
+                 break;
+ 
++            case GEN_RID:
++                t = PyTuple_New(2);
++                if (t == NULL)
++                    goto fail;
++
++                v = PyUnicode_FromString("Registered ID");
++                if (v == NULL) {
++                    Py_DECREF(t);
++                    goto fail;
++                }
++                PyTuple_SET_ITEM(t, 0, v);
++
++                len = i2t_ASN1_OBJECT(buf, sizeof(buf)-1, name->d.rid);
++                if (len < 0) {
++                    Py_DECREF(t);
++                    _setSSLError(NULL, 0, __FILE__, __LINE__);
++                    goto fail;
++                } else if (len >= (int)sizeof(buf)) {
++                    v = PyUnicode_FromString("<INVALID>");
++                } else {
++                    v = PyUnicode_FromStringAndSize(buf, len);
++                }
++                if (v == NULL) {
++                    Py_DECREF(t);
++                    goto fail;
++                }
++                PyTuple_SET_ITEM(t, 1, v);
++                break;
++
+             default:
+                 /* for everything else, we use the OpenSSL print form */
+                 switch (gntype) {
+@@ -978,8 +1007,12 @@ static PyObject *
+                     goto fail;
+                 }
+                 vptr = strchr(buf, ':');
+-                if (vptr == NULL)
++                if (vptr == NULL) {
++                    PyErr_Format(PyExc_ValueError,
++                                 "Invalid value %.200s",
++                                 buf);
+                     goto fail;
++                }
+                 t = PyTuple_New(2);
+                 if (t == NULL)
+                     goto fail;
+

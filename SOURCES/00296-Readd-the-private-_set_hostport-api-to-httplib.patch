@@ -1,0 +1,26 @@
+From 8a91bb4ea0a7f50d024fe55014c2e86e36e67751 Mon Sep 17 00:00:00 2001
+From: Tomas Orsava <torsava@redhat.com>
+Date: Mon, 19 Feb 2018 14:42:13 +0100
+Subject: [PATCH] Readd the private `_set_hostport` api to httplib
+
+---
+ Lib/httplib.py | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/Lib/httplib.py b/Lib/httplib.py
+index b69145b..da2f346 100644
+--- a/Lib/httplib.py
++++ b/Lib/httplib.py
+@@ -787,6 +787,9 @@ class HTTPConnection:
+                 host = host[1:-1]
+         return (host, port)
+ 
++    def _set_hostport(self, host, port):
++        (self.host, self.port) = self._get_hostport(host, port)
++
+     def set_debuglevel(self, level):
+         self.debuglevel = level
+ 
+-- 
+2.13.6
+

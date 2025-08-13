@@ -1,0 +1,489 @@
+
+# HG changeset patch
+# User Benjamin Peterson <benjamin@python.org>
+# Date 1401567982 25200
+# Node ID e4da3ba9dcac4374ca0ccc46a48c32be6f951038
+# Parent  8fa8c290c165dccd613632b69a816623b51e801e
+backport hashlib.pbkdf2_hmac per PEP 466 (closes #21304)
+
+Backport by Alex Gaynor.
+
+diff --git a/Doc/library/hashlib.rst b/Doc/library/hashlib.rst
+--- a/Doc/library/hashlib.rst
++++ b/Doc/library/hashlib.rst
+@@ -135,6 +135,46 @@ A hash object has the following methods:
+    compute the digests of strings that share a common initial substring.
+ 
+ 
++Key Derivation Function
++-----------------------
++
++Key derivation and key stretching algorithms are designed for secure password
++hashing. Naive algorithms such as ``sha1(password)`` are not resistant against
++brute-force attacks. A good password hashing function must be tunable, slow, and
++include a `salt <https://en.wikipedia.org/wiki/Salt_%28cryptography%29>`_.
++
++
++.. function:: pbkdf2_hmac(name, password, salt, rounds, dklen=None)
++
++   The function provides PKCS#5 password-based key derivation function 2. It
++   uses HMAC as pseudorandom function.
++
++   The string *name* is the desired name of the hash digest algorithm for
++   HMAC, e.g. 'sha1' or 'sha256'. *password* and *salt* are interpreted as
++   buffers of bytes. Applications and libraries should limit *password* to
++   a sensible value (e.g. 1024). *salt* should be about 16 or more bytes from
++   a proper source, e.g. :func:`os.urandom`.
++
++   The number of *rounds* should be chosen based on the hash algorithm and
++   computing power. As of 2013, at least 100,000 rounds of SHA-256 is suggested.
++
++   *dklen* is the length of the derived key. If *dklen* is ``None`` then the
++   digest size of the hash algorithm *name* is used, e.g. 64 for SHA-512.
++
++   >>> import hashlib, binascii
++   >>> dk = hashlib.pbkdf2_hmac('sha256', b'password', b'salt', 100000)
++   >>> binascii.hexlify(dk)
++   b'0394a2ede332c9a13eb82e9b24631604c31df978b4e2f0fbd2c549944f9d79a5'
++
++   .. versionadded:: 2.7.8
++
++   .. note::
++
++      A fast implementation of *pbkdf2_hmac* is available with OpenSSL.  The
++      Python implementation uses an inline version of :mod:`hmac`. It is about
++      three times slower and doesn't release the GIL.
++
++
+ .. seealso::
+
+    Module :mod:`hmac`
+diff --git a/Lib/hashlib.py b/Lib/hashlib.py
+--- a/Lib/hashlib.py
++++ b/Lib/hashlib.py
+@@ -77,7 +77,7 @@ __always_supported = ('md5', 'sha1', 'sh
+ 
+ algorithms = __always_supported
+ 
+-__all__ = __always_supported + ('new', 'algorithms')
++__all__ = __always_supported + ('new', 'algorithms', 'pbkdf2_hmac')
+ 
+ 
+ def __get_openssl_constructor(name):
+@@ -123,6 +123,72 @@ for __func_name in __always_supported:
+         import logging
+         logging.exception('code for hash %s was not found.', __func_name)
+ 
++try:
++    # OpenSSL's PKCS5_PBKDF2_HMAC requires OpenSSL 1.0+ with HMAC and SHA
++    from _hashlib import pbkdf2_hmac
++except ImportError:
++    import binascii
++    import struct
++
++    _trans_5C = b"".join(chr(x ^ 0x5C) for x in range(256))
++    _trans_36 = b"".join(chr(x ^ 0x36) for x in range(256))
++
++    def pbkdf2_hmac(hash_name, password, salt, iterations, dklen=None):
++        """Password based key derivation function 2 (PKCS #5 v2.0)
++
++        This Python implementations based on the hmac module about as fast
++        as OpenSSL's PKCS5_PBKDF2_HMAC for short passwords and much faster
++        for long passwords.
++        """
++        if not isinstance(hash_name, str):
++            raise TypeError(hash_name)
++
++        if not isinstance(password, (bytes, bytearray)):
++            password = bytes(buffer(password))
++        if not isinstance(salt, (bytes, bytearray)):
++            salt = bytes(buffer(salt))
++
++        # Fast inline HMAC implementation
++        inner = new(hash_name)
++        outer = new(hash_name)
++        blocksize = getattr(inner, 'block_size', 64)
++        if len(password) > blocksize:
++            password = new(hash_name, password).digest()
++        password = password + b'\x00' * (blocksize - len(password))
++        inner.update(password.translate(_trans_36))
++        outer.update(password.translate(_trans_5C))
++
++        def prf(msg, inner=inner, outer=outer):
++            # PBKDF2_HMAC uses the password as key. We can re-use the same
++            # digest objects and and just update copies to skip initialization.
++            icpy = inner.copy()
++            ocpy = outer.copy()
++            icpy.update(msg)
++            ocpy.update(icpy.digest())
++            return ocpy.digest()
++
++        if iterations < 1:
++            raise ValueError(iterations)
++        if dklen is None:
++            dklen = outer.digest_size
++        if dklen < 1:
++            raise ValueError(dklen)
++
++        hex_format_string = "%%0%ix" % (new(hash_name).digest_size * 2)
++
++        dkey = b''
++        loop = 1
++        while len(dkey) < dklen:
++            prev = prf(salt + struct.pack(b'>I', loop))
++            rkey = int(binascii.hexlify(prev), 16)
++            for i in xrange(iterations - 1):
++                prev = prf(prev)
++                rkey ^= int(binascii.hexlify(prev), 16)
++            loop += 1
++            dkey += binascii.unhexlify(hex_format_string % rkey)
++
++        return dkey[:dklen]
++
+ # Cleanup locals()
+ del __always_supported, __func_name, __get_hash
+ del __hash_new, __get_openssl_constructor
+diff --git a/Lib/test/test_hashlib.py b/Lib/test/test_hashlib.py
+--- a/Lib/test/test_hashlib.py
++++ b/Lib/test/test_hashlib.py
+@@ -16,6 +16,8 @@ except ImportError:
+     threading = None
+ import unittest
+ import warnings
++from binascii import unhexlify
++
+ from test import test_support
+ from test.test_support import _4G, precisionbigmemtest
+ 
+@@ -436,8 +438,72 @@ class HashLibTestCase(unittest.TestCase)
+         
+ 
+ 
++class KDFTests(unittest.TestCase):
++    pbkdf2_test_vectors = [
++        (b'password', b'salt', 1, None),
++        (b'password', b'salt', 2, None),
++        (b'password', b'salt', 4096, None),
++        # too slow, it takes over a minute on a fast CPU.
++        #(b'password', b'salt', 16777216, None),
++        (b'passwordPASSWORDpassword', b'saltSALTsaltSALTsaltSALTsaltSALTsalt',
++         4096, -1),
++        (b'pass\0word', b'sa\0lt', 4096, 16),
++    ]
++
++    pbkdf2_results = {
++        "sha1": [
++            # offical test vectors from RFC 6070
++            (unhexlify('0c60c80f961f0e71f3a9b524af6012062fe037a6'), None),
++            (unhexlify('ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957'), None),
++            (unhexlify('4b007901b765489abead49d926f721d065a429c1'), None),
++            #(unhexlify('eefe3d61cd4da4e4e9945b3d6ba2158c2634e984'), None),
++            (unhexlify('3d2eec4fe41c849b80c8d83662c0e44a8b291a964c'
++                           'f2f07038'), 25),
++            (unhexlify('56fa6aa75548099dcc37d7f03425e0c3'), None),],
++        "sha256": [
++            (unhexlify('120fb6cffcf8b32c43e7225256c4f837'
++                           'a86548c92ccc35480805987cb70be17b'), None),
++            (unhexlify('ae4d0c95af6b46d32d0adff928f06dd0'
++                           '2a303f8ef3c251dfd6e2d85a95474c43'), None),
++            (unhexlify('c5e478d59288c841aa530db6845c4c8d'
++                           '962893a001ce4e11a4963873aa98134a'), None),
++            #(unhexlify('cf81c66fe8cfc04d1f31ecb65dab4089'
++            #               'f7f179e89b3b0bcb17ad10e3ac6eba46'), None),
++            (unhexlify('348c89dbcbd32b2f32d814b8116e84cf2b17'
++                           '347ebc1800181c4e2a1fb8dd53e1c635518c7dac47e9'), 40),
++            (unhexlify('89b69d0516f829893c696226650a8687'), None),],
++        "sha512": [
++            (unhexlify('867f70cf1ade02cff3752599a3a53dc4af34c7a669815ae5'
++                           'd513554e1c8cf252c02d470a285a0501bad999bfe943c08f'
++                           '050235d7d68b1da55e63f73b60a57fce'), None),
++            (unhexlify('e1d9c16aa681708a45f5c7c4e215ceb66e011a2e9f004071'
++                           '3f18aefdb866d53cf76cab2868a39b9f7840edce4fef5a82'
++                           'be67335c77a6068e04112754f27ccf4e'), None),
++            (unhexlify('d197b1b33db0143e018b12f3d1d1479e6cdebdcc97c5c0f8'
++                           '7f6902e072f457b5143f30602641b3d55cd335988cb36b84'
++                           '376060ecd532e039b742a239434af2d5'), None),
++            (unhexlify('8c0511f4c6e597c6ac6315d8f0362e225f3c501495ba23b8'
++                           '68c005174dc4ee71115b59f9e60cd9532fa33e0f75aefe30'
++                           '225c583a186cd82bd4daea9724a3d3b8'), 64),
++            (unhexlify('9d9e9c4cd21fe4be24d5b8244c759665'), None),],
++    }
++
++    def test_pbkdf2_hmac(self):
++        for digest_name, results in self.pbkdf2_results.items():
++            for i, vector in enumerate(self.pbkdf2_test_vectors):
++                password, salt, rounds, dklen = vector
++                expected, overwrite_dklen = results[i]
++                if overwrite_dklen:
++                    dklen = overwrite_dklen
++                out = hashlib.pbkdf2_hmac(
++                    digest_name, password, salt, rounds, dklen)
++                self.assertEqual(out, expected,
++                                 (digest_name, password, salt, rounds, dklen))
++
++
++
+ def test_main():
+-    test_support.run_unittest(HashLibTestCase)
++    test_support.run_unittest(HashLibTestCase, KDFTests)
+ 
+ if __name__ == "__main__":
+     test_main()
+diff --git a/Modules/_hashopenssl.c b/Modules/_hashopenssl.c
+--- a/Modules/_hashopenssl.c
++++ b/Modules/_hashopenssl.c
+@@ -39,6 +39,7 @@
+ #include <openssl/ssl.h>
+ #include <openssl/err.h>
+ #include <openssl/evp.h>
++#include <openssl/hmac.h>
+ 
+ #define MUNCH_SIZE INT_MAX
+ 
+@@ -563,6 +564,226 @@ EVP_new(PyObject *self, PyObject *args,
+     return ret_obj;
+ }
+ 
++
++
++#if (OPENSSL_VERSION_NUMBER >= 0x10000000 && !defined(OPENSSL_NO_HMAC) \
++     && !defined(OPENSSL_NO_SHA))
++
++#define PY_PBKDF2_HMAC 1
++
++/* Improved implementation of PKCS5_PBKDF2_HMAC()
++ *
++ * PKCS5_PBKDF2_HMAC_fast() hashes the password exactly one time instead of
++ * `iter` times. Today (2013) the iteration count is typically 100,000 or
++ * more. The improved algorithm is not subject to a Denial-of-Service
++ * vulnerability with overly large passwords.
++ *
++ * Also OpenSSL < 1.0 don't provide PKCS5_PBKDF2_HMAC(), only
++ * PKCS5_PBKDF2_SHA1.
++ */
++static int
++PKCS5_PBKDF2_HMAC_fast(const char *pass, int passlen,
++                       const unsigned char *salt, int saltlen,
++                       int iter, const EVP_MD *digest,
++                       int keylen, unsigned char *out)
++{
++    unsigned char digtmp[EVP_MAX_MD_SIZE], *p, itmp[4];
++    int cplen, j, k, tkeylen, mdlen;
++    unsigned long i = 1;
++    HMAC_CTX hctx_tpl, hctx;
++
++    mdlen = EVP_MD_size(digest);
++    if (mdlen < 0)
++        return 0;
++
++    HMAC_CTX_init(&hctx_tpl);
++    HMAC_CTX_init(&hctx);
++    p = out;
++    tkeylen = keylen;
++    if (!HMAC_Init_ex(&hctx_tpl, pass, passlen, digest, NULL)) {
++        HMAC_CTX_cleanup(&hctx_tpl);
++        return 0;
++    }
++    while(tkeylen) {
++        if(tkeylen > mdlen)
++            cplen = mdlen;
++        else
++            cplen = tkeylen;
++        /* We are unlikely to ever use more than 256 blocks (5120 bits!)
++         * but just in case...
++         */
++        itmp[0] = (unsigned char)((i >> 24) & 0xff);
++        itmp[1] = (unsigned char)((i >> 16) & 0xff);
++        itmp[2] = (unsigned char)((i >> 8) & 0xff);
++        itmp[3] = (unsigned char)(i & 0xff);
++        if (!HMAC_CTX_copy(&hctx, &hctx_tpl)) {
++            HMAC_CTX_cleanup(&hctx_tpl);
++            return 0;
++        }
++        if (!HMAC_Update(&hctx, salt, saltlen)
++                || !HMAC_Update(&hctx, itmp, 4)
++                || !HMAC_Final(&hctx, digtmp, NULL)) {
++            HMAC_CTX_cleanup(&hctx_tpl);
++            HMAC_CTX_cleanup(&hctx);
++            return 0;
++        }
++        HMAC_CTX_cleanup(&hctx);
++        memcpy(p, digtmp, cplen);
++        for (j = 1; j < iter; j++) {
++            if (!HMAC_CTX_copy(&hctx, &hctx_tpl)) {
++                HMAC_CTX_cleanup(&hctx_tpl);
++                return 0;
++            }
++            if (!HMAC_Update(&hctx, digtmp, mdlen)
++                    || !HMAC_Final(&hctx, digtmp, NULL)) {
++                HMAC_CTX_cleanup(&hctx_tpl);
++                HMAC_CTX_cleanup(&hctx);
++                return 0;
++            }
++            HMAC_CTX_cleanup(&hctx);
++            for (k = 0; k < cplen; k++) {
++                p[k] ^= digtmp[k];
++            }
++        }
++        tkeylen-= cplen;
++        i++;
++        p+= cplen;
++    }
++    HMAC_CTX_cleanup(&hctx_tpl);
++    return 1;
++}
++
++/* LCOV_EXCL_START */
++static PyObject *
++_setException(PyObject *exc)
++{
++    unsigned long errcode;
++    const char *lib, *func, *reason;
++
++    errcode = ERR_peek_last_error();
++    if (!errcode) {
++        PyErr_SetString(exc, "unknown reasons");
++        return NULL;
++    }
++    ERR_clear_error();
++
++    lib = ERR_lib_error_string(errcode);
++    func = ERR_func_error_string(errcode);
++    reason = ERR_reason_error_string(errcode);
++
++    if (lib && func) {
++        PyErr_Format(exc, "[%s: %s] %s", lib, func, reason);
++    }
++    else if (lib) {
++        PyErr_Format(exc, "[%s] %s", lib, reason);
++    }
++    else {
++        PyErr_SetString(exc, reason);
++    }
++    return NULL;
++}
++/* LCOV_EXCL_STOP */
++
++PyDoc_STRVAR(pbkdf2_hmac__doc__,
++"pbkdf2_hmac(hash_name, password, salt, iterations, dklen=None) -> key\n\
++\n\
++Password based key derivation function 2 (PKCS #5 v2.0) with HMAC as\n\
++pseudorandom function.");
++
++static PyObject *
++pbkdf2_hmac(PyObject *self, PyObject *args, PyObject *kwdict)
++{
++    static char *kwlist[] = {"hash_name", "password", "salt", "iterations",
++                             "dklen", NULL};
++    PyObject *key_obj = NULL, *dklen_obj = Py_None;
++    char *name, *key;
++    Py_buffer password, salt;
++    long iterations, dklen;
++    int retval;
++    const EVP_MD *digest;
++
++    if (!PyArg_ParseTupleAndKeywords(args, kwdict, "ss*s*l|O:pbkdf2_hmac",
++                                     kwlist, &name, &password, &salt,
++                                     &iterations, &dklen_obj)) {
++        return NULL;
++    }
++
++    digest = EVP_get_digestbyname(name);
++    if (digest == NULL) {
++        PyErr_SetString(PyExc_ValueError, "unsupported hash type");
++        goto end;
++    }
++
++    if (password.len > INT_MAX) {
++        PyErr_SetString(PyExc_OverflowError,
++                        "password is too long.");
++        goto end;
++    }
++
++    if (salt.len > INT_MAX) {
++        PyErr_SetString(PyExc_OverflowError,
++                        "salt is too long.");
++        goto end;
++    }
++
++    if (iterations < 1) {
++        PyErr_SetString(PyExc_ValueError,
++                        "iteration value must be greater than 0.");
++        goto end;
++    }
++    if (iterations > INT_MAX) {
++        PyErr_SetString(PyExc_OverflowError,
++                        "iteration value is too great.");
++        goto end;
++    }
++
++    if (dklen_obj == Py_None) {
++        dklen = EVP_MD_size(digest);
++    } else {
++        dklen = PyLong_AsLong(dklen_obj);
++        if ((dklen == -1) && PyErr_Occurred()) {
++            goto end;
++        }
++    }
++    if (dklen < 1) {
++        PyErr_SetString(PyExc_ValueError,
++                        "key length must be greater than 0.");
++        goto end;
++    }
++    if (dklen > INT_MAX) {
++        /* INT_MAX is always smaller than dkLen max (2^32 - 1) * hLen */
++        PyErr_SetString(PyExc_OverflowError,
++                        "key length is too great.");
++        goto end;
++    }
++
++    key_obj = PyBytes_FromStringAndSize(NULL, dklen);
++    if (key_obj == NULL) {
++        goto end;
++    }
++    key = PyBytes_AS_STRING(key_obj);
++
++    Py_BEGIN_ALLOW_THREADS
++    retval = PKCS5_PBKDF2_HMAC_fast((char*)password.buf, (int)password.len,
++                                    (unsigned char *)salt.buf, (int)salt.len,
++                                    iterations, digest, dklen,
++                                    (unsigned char *)key);
++    Py_END_ALLOW_THREADS
++
++    if (!retval) {
++        Py_CLEAR(key_obj);
++        _setException(PyExc_ValueError);
++        goto end;
++    }
++
++  end:
++    PyBuffer_Release(&password);
++    PyBuffer_Release(&salt);
++    return key_obj;
++}
++
++#endif
++
+ /*
+  *  This macro and function generates a family of constructor function
+  *  definitions for specific hash algorithms.  These constructors are much
+@@ -690,6 +911,10 @@ static struct PyMethodDef EVP_functions[
+     CONSTRUCTOR_METH_DEF(sha384),
+     CONSTRUCTOR_METH_DEF(sha512),
+ #endif
++#ifdef PY_PBKDF2_HMAC
++    {"pbkdf2_hmac", (PyCFunction)pbkdf2_hmac, METH_VARARGS|METH_KEYWORDS,
++     pbkdf2_hmac__doc__},
++#endif
+     {NULL,      NULL}            /* Sentinel */
+ };
+ 
+diff -up Python-2.7.5/Lib/test/test_hmac.py.cod Python-2.7.5/Lib/test/test_hmac.py
+--- Python-2.7.5/Lib/test/test_hmac.py.cod	2015-02-23 10:37:13.448594606 +0100
++++ Python-2.7.5/Lib/test/test_hmac.py	2015-02-23 10:37:27.581717509 +0100
+@@ -1,3 +1,5 @@
++# coding: utf-8
++
+ import hmac
+ import hashlib
+ import unittest

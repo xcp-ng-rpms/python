@@ -1,0 +1,114 @@
+diff --git a/Include/pythread.h b/Include/pythread.h
+index dfd6157..f3e6259 100644
+--- a/Include/pythread.h
++++ b/Include/pythread.h
+@@ -30,6 +30,8 @@ PyAPI_FUNC(void) PyThread_delete_key(int);
+ PyAPI_FUNC(int) PyThread_set_key_value(int, void *);
+ PyAPI_FUNC(void *) PyThread_get_key_value(int);
+ PyAPI_FUNC(void) PyThread_delete_key_value(int key);
++PyAPI_FUNC(int) _PyThread_AcquireKeyLock(void);
++PyAPI_FUNC(void) _PyThread_ReleaseKeyLock(void);
+ 
+ /* Cleanup after a fork */
+ PyAPI_FUNC(void) PyThread_ReInitTLS(void);
+diff --git a/Modules/posixmodule.c b/Modules/posixmodule.c
+index 022d7aa..8f6cbb2 100644
+--- a/Modules/posixmodule.c
++++ b/Modules/posixmodule.c
+@@ -65,6 +65,10 @@ corresponding Unix manual entries for more information on calls.");
+ #include "osdefs.h"
+ #endif
+
++#ifdef WITH_THREAD
++#include "pythread.h"
++#endif
++
+ #ifdef HAVE_SYS_TYPES_H
+ #include <sys/types.h>
+ #endif /* HAVE_SYS_TYPES_H */
+@@ -3796,7 +3800,18 @@ posix_fork1(PyObject *self, PyObject *noargs)
+     pid_t pid;
+     int result = 0;
+     _PyImport_AcquireLock();
++#ifdef WITH_THREAD
++    if (_PyThread_AcquireKeyLock() == 0) {
++        _PyImport_ReleaseLock();
++        PyErr_SetString(PyExc_RuntimeError,
++                        "could not acquire thread key lock");
++        return NULL;
++    }
++#endif
+     pid = fork1();
++#ifdef WITH_THREAD
++    _PyThread_ReleaseKeyLock();
++#endif
+     if (pid == 0) {
+         /* child: this clobbers and resets the import lock. */
+         PyOS_AfterFork();
+@@ -3829,7 +3844,18 @@ posix_fork(PyObject *self, PyObject *noargs)
+     pid_t pid;
+     int result = 0;
+     _PyImport_AcquireLock();
++#ifdef WITH_THREAD
++    if (_PyThread_AcquireKeyLock() == 0) {
++        _PyImport_ReleaseLock();
++        PyErr_SetString(PyExc_RuntimeError,
++                        "could not acquire thread key lock");
++        return NULL;
++    }
++#endif
+     pid = fork();
++#ifdef WITH_THREAD
++    _PyThread_ReleaseKeyLock();
++#endif
+     if (pid == 0) {
+         /* child: this clobbers and resets the import lock. */
+         PyOS_AfterFork();
+@@ -3955,7 +3981,18 @@ posix_forkpty(PyObject *self, PyObject *noargs)
+     pid_t pid;
+ 
+     _PyImport_AcquireLock();
++#ifdef WITH_THREAD
++    if (_PyThread_AcquireKeyLock() == 0) {
++        _PyImport_ReleaseLock();
++        PyErr_SetString(PyExc_RuntimeError,
++                        "could not acquire thread key lock");
++        return NULL;
++    }
++#endif
+     pid = forkpty(&master_fd, NULL, NULL, NULL);
++#ifdef WITH_THREAD
++    _PyThread_ReleaseKeyLock();
++#endif
+     if (pid == 0) {
+         /* child: this clobbers and resets the import lock. */
+         PyOS_AfterFork();
+diff --git a/Python/thread.c b/Python/thread.c
+index dd333e8..957739e 100644
+--- a/Python/thread.c
++++ b/Python/thread.c
+@@ -387,6 +387,24 @@ PyThread_delete_key_value(int key)
+     PyThread_release_lock(keymutex);
+ }
+ 
++int
++_PyThread_AcquireKeyLock(void)
++{
++    if (keymutex == NULL) {
++        keymutex = PyThread_allocate_lock();
++    }
++    if (keymutex == NULL) {
++        return 0;
++    }
++    return PyThread_acquire_lock(keymutex, 1);
++}
++
++void
++_PyThread_ReleaseKeyLock(void)
++{
++    PyThread_release_lock(keymutex);
++}
++
+ /* Forget everything not associated with the current thread id.
+  * This function is called from PyOS_AfterFork().  It is necessary
+  * because other thread ids which were in use at the time of the fork

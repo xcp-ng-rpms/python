@@ -1,0 +1,137 @@
+@@ -, +, @@ 
+---
+ Lib/ssl.py | 53 ++++++++++++++++++++++++++++++++++++++---------------
+ 1 file changed, 38 insertions(+), 15 deletions(-)
+--- a/Lib/ssl.py	
++++ a/Lib/ssl.py	
+@@ -466,24 +466,47 @@ def _create_unverified_context(protocol=PROTOCOL_SSLv23, cert_reqs=None,
+ 
+     return context
+ 
++_https_verify_envvar = 'PYTHONHTTPSVERIFY'
+ _cert_verification_config = '/etc/python/cert-verification.cfg'
+ 
+-def _get_verify_status(protocol):
+-   context_factory = {
+-       'platform_default': _create_unverified_context,
+-       'enable': create_default_context,
+-       'disable': _create_unverified_context
+-   }
+-   import ConfigParser
+-   try:
+-       config = ConfigParser.RawConfigParser()
+-       config.read(_cert_verification_config)
+-       status = config.get(protocol, 'verify')
+-   except (ConfigParser.NoSectionError, ConfigParser.NoOptionError):
+-       status = 'platform_default'
+-   default = context_factory.get('platform_default')
+-   return context_factory.get(status, default)
++# To provide same function name as specified in PEP493 with keeping
++# the old name as defined in our previous patch
++_get_https_context_factory = lambda: _get_verify_status('https')
+ 
++def _get_verify_status(protocol):
++    # See https://www.python.org/dev/peps/pep-0493/#recommendation-for-combined-feature-backports
++    # Check for an environmental override of the default behaviour
++    if not sys.flags.ignore_environment:
++        config_setting = os.environ.get(_https_verify_envvar)
++        if config_setting is not None:
++            if config_setting == '0':
++                return _create_unverified_context
++            return create_default_context
++
++    # Check for a system-wide override of the default behaviour
++    context_factory = {
++        'platform_default': create_default_context,
++        'enable': create_default_context,
++        'disable': _create_unverified_context
++    }
++    import ConfigParser
++    try:
++        config = ConfigParser.RawConfigParser()
++        config.read(_cert_verification_config)
++        status = config.get(protocol, 'verify')
++    except (ConfigParser.NoSectionError, ConfigParser.NoOptionError):
++        status = 'platform_default'
++    default = context_factory.get('platform_default')
++    return context_factory.get(status, default)
++
++# See https://www.python.org/dev/peps/pep-0493/#feature-configuration-api
++def _https_verify_certificates(enable=True):
++    """Verify server HTTPS certificates by default?"""
++    global _create_default_https_context
++    if enable:
++        _create_default_https_context = create_default_context
++    else:
++        _create_default_https_context = _create_unverified_context
+ 
+ # Used by http.client if no context is explicitly passed.
+ _create_default_https_context = _get_verify_status('https')
+--- a/Lib/test/test_ssl.py	Thu Jan 14 21:57:57 2016 -0800
++++ a/Lib/test/test_ssl.py	Fri Jan 15 17:41:37 2016 +1000
+@@ -4,6 +4,7 @@
+ import sys
+ import unittest
+ from test import test_support as support
++from test.script_helper import assert_python_ok
+ import asyncore
+ import socket
+ import select
+@@ -1149,6 +1149,57 @@
+         self.assertEqual(ctx.verify_mode, ssl.CERT_NONE)
+         self.assertEqual(ctx.options & ssl.OP_NO_SSLv2, ssl.OP_NO_SSLv2)
+ 
++    def test__https_verify_certificates(self):
++        # Unit test to check the contect factory mapping
++        # The factories themselves are tested above
++        # This test will fail by design if run under PYTHONHTTPSVERIFY=0
++        # (as will various test_httplib tests)
++
++        # Uses a fresh SSL module to avoid affecting the real one
++        local_ssl = support.import_fresh_module("ssl")
++        # Certificate verification is enabled by default
++        self.assertIs(local_ssl._create_default_https_context,
++                      local_ssl.create_default_context)
++        # Turn default verification off
++        local_ssl._https_verify_certificates(enable=False)
++        self.assertIs(local_ssl._create_default_https_context,
++                      local_ssl._create_unverified_context)
++        # And back on
++        local_ssl._https_verify_certificates(enable=True)
++        self.assertIs(local_ssl._create_default_https_context,
++                      local_ssl.create_default_context)
++        # The default behaviour is to enable
++        local_ssl._https_verify_certificates(enable=False)
++        local_ssl._https_verify_certificates()
++        self.assertIs(local_ssl._create_default_https_context,
++                      local_ssl.create_default_context)
++
++    def test__https_verify_envvar(self):
++        # Unit test to check the PYTHONHTTPSVERIFY handling
++        # Need to use a subprocess so it can still be run under -E
++        https_is_verified = """import ssl, sys; \
++            status = "Error: _create_default_https_context does not verify certs" \
++                       if ssl._create_default_https_context is \
++                          ssl._create_unverified_context \
++                     else None; \
++            sys.exit(status)"""
++        https_is_not_verified = """import ssl, sys; \
++            status = "Error: _create_default_https_context verifies certs" \
++                       if ssl._create_default_https_context is \
++                          ssl.create_default_context \
++                     else None; \
++            sys.exit(status)"""
++        extra_env = {}
++        # Omitting it leaves verification on
++        assert_python_ok("-c", https_is_verified, **extra_env)
++        # Setting it to zero turns verification off
++        extra_env[ssl._https_verify_envvar] = "0"
++        assert_python_ok("-c", https_is_not_verified, **extra_env)
++        # Any other value should also leave it on
++        for setting in ("", "1", "enabled", "foo"):
++            extra_env[ssl._https_verify_envvar] = setting
++            assert_python_ok("-c", https_is_verified, **extra_env)
++
+     def test_check_hostname(self):
+         ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+         self.assertFalse(ctx.check_hostname)

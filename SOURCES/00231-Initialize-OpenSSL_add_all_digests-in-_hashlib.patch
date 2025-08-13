@@ -1,0 +1,11 @@
+diff -up Python-2.7.5/Modules/_hashopenssl.c.digest Python-2.7.5/Modules/_hashopenssl.c
+--- Python-2.7.5/Modules/_hashopenssl.c.digest	2016-01-05 10:53:02.947312688 +0100
++++ Python-2.7.5/Modules/_hashopenssl.c	2016-01-05 10:53:15.504431960 +0100
+@@ -984,6 +984,7 @@ init_hashlib(void)
+     SSL_load_error_strings();
+     SSL_library_init();
+     ERR_load_crypto_strings();
++    OpenSSL_add_all_digests();
+ 
+     Py_TYPE(&EVPtype) = &PyType_Type;
+     if (PyType_Ready(&EVPtype) < 0)

@@ -1,0 +1,19 @@
+--- Lib/test/test_gdb.py.orig	2014-08-01 14:30:43.397473152 +0200
++++ Lib/test/test_gdb.py	2014-08-01 14:34:50.907325691 +0200
+@@ -135,6 +135,16 @@
+                     # Disable this:
+                     'set print entry-values no',
+ 
++                    # The tests assume that the first frame of printed
++                    #  backtrace will not contain program counter,
++                    #  that is however not guaranteed by gdb (rhbz#1125657)
++                    #  therefore we need to use 'set print address off' to
++                    #  make sure the counter is not there. For example:
++                    # #0 in PyObject_Print ...
++                    #  is assumed, but sometimes this can be e.g.
++                    # #0 0x00003fffb7dd1798 in PyObject_Print ...
++                    'set print address off',
++
+                     'run']
+ 
+         if HAS_AUTOLOAD_SAFEPATH:

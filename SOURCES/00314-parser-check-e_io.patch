@@ -1,0 +1,56 @@
+commit bcd39b7b9bd3a7f8a6a34410169794a6264a6fed
+Author: Victor Stinner <vstinner@redhat.com>
+Date:   Wed Nov 7 00:45:13 2018 +0100
+
+    bpo-25083: Python can sometimes create incorrect .pyc files
+    
+    Python 2 never checked for I/O error when reading .py files and
+    thus could mistake an I/O error for EOF and create incorrect .pyc
+    files. This adds an check for this and aborts on an error.
+    
+    Patch by tzickel, commit f64c813de84011a84ca21d75a294861a9cc2dfdc.
+
+    Resolves: rhbz#1629982
+
+diff --git a/Include/errcode.h b/Include/errcode.h
+index becec80..5c5a0f7 100644
+--- a/Include/errcode.h
++++ b/Include/errcode.h
+@@ -29,6 +29,7 @@ extern "C" {
+ #define E_EOFS		23	/* EOF in triple-quoted string */
+ #define E_EOLS		24	/* EOL in single-quoted string */
+ #define E_LINECONT	25	/* Unexpected characters after a line continuation */
++#define E_IO    	26	/* I/O error */
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/Parser/tokenizer.c b/Parser/tokenizer.c
+index ee6313b..0217f2b 100644
+--- a/Parser/tokenizer.c
++++ b/Parser/tokenizer.c
+@@ -1644,6 +1644,11 @@ int
+ PyTokenizer_Get(struct tok_state *tok, char **p_start, char **p_end)
+ {
+     int result = tok_get(tok, p_start, p_end);
++    if (tok->fp && ferror(tok->fp)) {
++        clearerr(tok->fp);
++        result = ERRORTOKEN;
++        tok->done = E_IO;
++    }
+     if (tok->decoding_erred) {
+         result = ERRORTOKEN;
+         tok->done = E_DECODE;
+diff --git a/Python/pythonrun.c b/Python/pythonrun.c
+index 0b73f3a..9f06236 100644
+--- a/Python/pythonrun.c
++++ b/Python/pythonrun.c
+@@ -1643,6 +1643,9 @@ err_input(perrdetail *err)
+         Py_XDECREF(tb);
+         break;
+     }
++    case E_IO:
++        msg = "I/O error while reading";
++        break;
+     case E_LINECONT:
+         msg = "unexpected character after line continuation character";
+         break;

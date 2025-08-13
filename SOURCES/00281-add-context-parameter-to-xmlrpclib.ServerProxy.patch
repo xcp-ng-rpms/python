@@ -1,0 +1,91 @@
+
+# HG changeset patch
+# User Benjamin Peterson <benjamin@python.org>
+# Date 1417319735 18000
+# Node ID 62bd574e95d5ec4b37ca8f72ae6523ea7d6c11cd
+# Parent  1ac5aec658f6972c3372f139ce69ee6799dc0b2e
+add context parameter to xmlrpclib.ServerProxy (#22960)
+
+Patch from Alex Gaynor.
+
+diff --git a/Doc/library/xmlrpclib.rst b/Doc/library/xmlrpclib.rst
+--- a/Doc/library/xmlrpclib.rst
++++ b/Doc/library/xmlrpclib.rst
+@@ -39,7 +39,7 @@ between conformable Python objects and X
+    For https URIs, :mod:`xmlrpclib` now performs all the necessary certificate
+    and hostname checks by default
+ 
+-.. class:: ServerProxy(uri[, transport[, encoding[, verbose[,  allow_none[, use_datetime]]]]])
++.. class:: ServerProxy(uri[, transport[, encoding[, verbose[, allow_none[, use_datetime[, context]]]]]])
+ 
+    A :class:`ServerProxy` instance is an object that manages communication with a
+    remote XML-RPC server.  The required first argument is a URI (Uniform Resource
+@@ -57,11 +57,13 @@ between conformable Python objects and X
+    :class:`datetime.datetime` objects may be passed to calls.
+ 
+    Both the HTTP and HTTPS transports support the URL syntax extension for HTTP
+-   Basic Authentication: ``http://user:pass@host:port/path``.  The  ``user:pass``
++   Basic Authentication: ``http://user:pass@host:port/path``.  The ``user:pass``
+    portion will be base64-encoded as an HTTP 'Authorization' header, and sent to
+    the remote server as part of the connection process when invoking an XML-RPC
+    method.  You only need to use this if the remote server requires a Basic
+-   Authentication user and password.
++   Authentication user and password. If an HTTPS url is provided, *context* may
++   be :class:`ssl.SSLContext` and configures the SSL settings of the underlying
++   HTTPS connection.
+ 
+    The returned instance is a proxy object with methods that can be used to invoke
+    corresponding RPC calls on the remote server.  If the remote server supports the
+@@ -131,6 +133,9 @@ between conformable Python objects and X
+       *__dict__* attribute and don't have a base class that is marshalled in a
+       special way.
+ 
++   .. versionchanged:: 2.7.9
++      Added the *context* argument.
++
+ 
+ .. seealso::
+ 
+diff --git a/Lib/xmlrpclib.py b/Lib/xmlrpclib.py
+--- a/Lib/xmlrpclib.py
++++ b/Lib/xmlrpclib.py
+@@ -1478,6 +1478,10 @@ class Transport:
+ class SafeTransport(Transport):
+     """Handles an HTTPS transaction to an XML-RPC server."""
+ 
++    def __init__(self, use_datetime=0, context=None):
++        Transport.__init__(self, use_datetime=use_datetime)
++        self.context = context
++
+     # FIXME: mostly untested
+ 
+     def make_connection(self, host):
+@@ -1493,7 +1497,7 @@ class SafeTransport(Transport):
+                 )
+         else:
+             chost, self._extra_headers, x509 = self.get_host_info(host)
+-            self._connection = host, HTTPS(chost, None, **(x509 or {}))
++            self._connection = host, HTTPS(chost, None, context=self.context, **(x509 or {}))
+             return self._connection[1]
+ 
+ ##
+@@ -1536,7 +1540,7 @@ class ServerProxy:
+     """
+ 
+     def __init__(self, uri, transport=None, encoding=None, verbose=0,
+-                 allow_none=0, use_datetime=0):
++                 allow_none=0, use_datetime=0, context=None):
+         # establish a "logical" server connection
+ 
+         if isinstance(uri, unicode):
+@@ -1553,7 +1557,7 @@ class ServerProxy:
+ 
+         if transport is None:
+             if type == "https":
+-                transport = SafeTransport(use_datetime=use_datetime)
++                transport = SafeTransport(use_datetime=use_datetime, context=context)
+             else:
+                 transport = Transport(use_datetime=use_datetime)
+         self.__transport = transport
+ 
+

@@ -1,0 +1,14 @@
+diff --git a/Modules/_ssl.c b/Modules/_ssl.c
+index a3ea254..d0a3830 100644
+--- a/Modules/_ssl.c
++++ b/Modules/_ssl.c
+@@ -2564,7 +2564,9 @@ load_cert_chain(PySSLContext *self, PyObject *args, PyObject *kwds)
+     }
+     SSL_CTX_set_default_passwd_cb(self->ctx, orig_passwd_cb);
+     SSL_CTX_set_default_passwd_cb_userdata(self->ctx, orig_passwd_userdata);
++    Py_XDECREF(keyfile_bytes);
+     PyMem_Free(pw_info.password);
++    PyMem_Free(certfile_bytes);
+     Py_RETURN_NONE;
+ 
+ error:
