@@ -1,0 +1,57 @@
+From bb0c1a5b758e2018cbcfb88dff0d29a6da47c81b Mon Sep 17 00:00:00 2001
+From: Deli Zhang <deli.zhang@citrix.com>
+Date: Sat, 21 Sep 2024 15:49:53 +0000
+Subject: [PATCH] CP-50325: Use new api of ncurses-devel
+
+Modules/_cursesmodule.c:810:18: error: dereferencing pointer to
+incomplete type
+    if (self->win->_flags & _ISPAD)
+
+Signed-off-by: Deli Zhang <deli.zhang@citrix.com>
+---
+ Modules/_cursesmodule.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/Modules/_cursesmodule.c b/Modules/_cursesmodule.c
+index b914e5f..0ff58d8 100644
+--- a/Modules/_cursesmodule.c
++++ b/Modules/_cursesmodule.c
+@@ -807,7 +807,7 @@ PyCursesWindow_EchoChar(PyCursesWindowObject *self, PyObject *args)
+     }
+ 
+ #ifdef WINDOW_HAS_FLAGS
+-    if (self->win->_flags & _ISPAD)
++    if (is_pad(self->win))
+         return PyCursesCheckERR(pechochar(self->win, ch | attr),
+                                 "echochar");
+     else
+@@ -1237,7 +1237,7 @@ PyCursesWindow_NoOutRefresh(PyCursesWindowObject *self, PyObject *args)
+ #ifndef WINDOW_HAS_FLAGS
+     if (0)
+ #else
+-        if (self->win->_flags & _ISPAD)
++        if (is_pad(self->win))
+ #endif
+         {
+             switch(PyTuple_Size(args)) {
+@@ -1380,7 +1380,7 @@ PyCursesWindow_Refresh(PyCursesWindowObject *self, PyObject *args)
+ #ifndef WINDOW_HAS_FLAGS
+     if (0)
+ #else
+-        if (self->win->_flags & _ISPAD)
++        if (is_pad(self->win))
+ #endif
+         {
+             switch(PyTuple_Size(args)) {
+@@ -1447,7 +1447,7 @@ PyCursesWindow_SubWin(PyCursesWindowObject *self, PyObject *args)
+ 
+     /* printf("Subwin: %i %i %i %i   \n", nlines, ncols, begin_y, begin_x); */
+ #ifdef WINDOW_HAS_FLAGS
+-    if (self->win->_flags & _ISPAD)
++    if (is_pad(self->win))
+         win = subpad(self->win, nlines, ncols, begin_y, begin_x);
+     else
+ #endif
+-- 
+2.43.0
+

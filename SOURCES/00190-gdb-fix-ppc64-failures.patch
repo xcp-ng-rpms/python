@@ -1,5 +1,5 @@
---- Tools/gdb/libpython.py.orig	2013-10-09 10:54:59.894701668 +0200
-+++ Tools/gdb/libpython.py	2013-10-09 11:09:30.278703290 +0200
+--- a/Tools/gdb/libpython.py.orig	2013-10-09 10:54:59.894701668 +0200
++++ b/Tools/gdb/libpython.py	2013-10-09 11:09:30.278703290 +0200
 @@ -1194,39 +1194,113 @@
              iter_frame = iter_frame.newer()
          return index

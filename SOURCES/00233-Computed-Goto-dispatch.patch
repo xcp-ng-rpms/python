@@ -13,6 +13,8 @@ Subject: [PATCH] Computed Goto dispatch for Python2
  configure.ac                |  51 +++
  pyconfig.h.in               |   6 +
  8 files changed, 1005 insertions(+), 230 deletions(-)
+create mode 100644 Python/makeopcodetargets.py
+create mode 100644 Python/opcode_targets.h
 
 diff --git a/Include/opcode.h b/Include/opcode.h
 index 9764109..9ed5487 100644
@@ -1763,8 +1765,9 @@ index 8c6f8d7..67d1576 100644
              fprintf(stderr,
                  "XXX lineno: %d, opcode: %d\n",
 diff --git a/Python/makeopcodetargets.py b/Python/makeopcodetargets.py
-index e69de29..703e5f2 100644
---- a/Python/makeopcodetargets.py
+new file mode 100644
+index 0000000..703e5f2
+--- /dev/null
 +++ b/Python/makeopcodetargets.py
 @@ -0,0 +1,45 @@
 +#! /usr/bin/env python
@@ -1814,8 +1817,9 @@ index e69de29..703e5f2 100644
 +        f.close()
 \ No newline at end of file
 diff --git a/Python/opcode_targets.h b/Python/opcode_targets.h
-index e69de29..2203566 100644
---- a/Python/opcode_targets.h
+new file mode 100644
+index 0000000..2203566
+--- /dev/null
 +++ b/Python/opcode_targets.h
 @@ -0,0 +1,258 @@
 +static void *opcode_targets[256] = {

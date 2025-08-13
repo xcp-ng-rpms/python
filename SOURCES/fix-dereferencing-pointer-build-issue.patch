@@ -1,0 +1,199 @@
+Fix build issues of:
+  error: dereferencing pointer to incomplete type
+
+OpenSSL 3 provides apis to access struct fields to prevent direct 
+pointer dereferencing.
+
+--
+diff --git a/Modules/_ssl.c b/Modules/_ssl.c
+index baea6e1ccce4..c7bea36c474e 100644
+--- a/Modules/_ssl.c
++++ b/Modules/_ssl.c
+@@ -709,7 +709,7 @@ _create_tuple_for_X509_NAME (X509_NAME *xname)
+ 
+         /* check to see if we've gotten to a new RDN */
+         if (rdn_level >= 0) {
+-            if (rdn_level != entry->set) {
++            if (rdn_level != X509_NAME_ENTRY_set(entry)) {
+                 /* yes, new RDN */
+                 /* add old RDN to DN */
+                 rdnt = PyList_AsTuple(rdn);
+@@ -726,7 +726,7 @@ _create_tuple_for_X509_NAME (X509_NAME *xname)
+                     goto fail0;
+             }
+         }
+-        rdn_level = entry->set;
++        rdn_level = X509_NAME_ENTRY_set(entry);
+ 
+         /* now add this attribute to the current RDN */
+         name = X509_NAME_ENTRY_get_object(entry);
+@@ -829,18 +829,18 @@ _get_peer_alt_names (X509 *certificate) {
+             goto fail;
+         }
+ 
+-        p = ext->value->data;
++        p = X509_EXTENSION_get_data(ext)->data;
+         if (method->it)
+             names = (GENERAL_NAMES*)
+               (ASN1_item_d2i(NULL,
+                              &p,
+-                             ext->value->length,
++                             X509_EXTENSION_get_data(ext)->length,
+                              ASN1_ITEM_ptr(method->it)));
+         else
+             names = (GENERAL_NAMES*)
+               (method->d2i(NULL,
+                            &p,
+-                           ext->value->length));
++                           X509_EXTENSION_get_data(ext)->length));
+ 
+         for(j = 0; j < sk_GENERAL_NAME_num(names); j++) {
+ 
+@@ -1087,7 +1087,7 @@ _get_crl_dp(X509 *certificate) {
+ #else
+     /* Calls x509v3_cache_extensions and sets up crldp */
+     X509_check_ca(certificate);
+-    dps = certificate->crldp;
++    dps = X509_get_ext_d2i(certificate, NID_crl_distribution_points, NULL, NULL);
+ #endif
+ 
+     if (dps == NULL) {
+@@ -1498,9 +1498,9 @@ static PyObject *PySSL_compression(PySSLSocket *self) {
+     if (self->ssl == NULL)
+         Py_RETURN_NONE;
+     comp_method = SSL_get_current_compression(self->ssl);
+-    if (comp_method == NULL || comp_method->type == NID_undef)
++    if (comp_method == NULL || COMP_get_type(comp_method) == NID_undef)
+         Py_RETURN_NONE;
+-    short_name = OBJ_nid2sn(comp_method->type);
++    short_name = OBJ_nid2sn(COMP_get_type(comp_method));
+     if (short_name == NULL)
+         Py_RETURN_NONE;
+     return PyBytes_FromString(short_name);
+@@ -2322,10 +2322,12 @@ static PyObject *
+ get_verify_flags(PySSLContext *self, void *c)
+ {
+     X509_STORE *store;
++    X509_VERIFY_PARAM *param;
+     unsigned long flags;
+ 
+     store = SSL_CTX_get_cert_store(self->ctx);
+-    flags = X509_VERIFY_PARAM_get_flags(store->param);
++    param = X509_STORE_get0_param(store);
++    flags = X509_VERIFY_PARAM_get_flags(param);
+     return PyLong_FromUnsignedLong(flags);
+ }
+ 
+@@ -2333,22 +2335,24 @@ static int
+ set_verify_flags(PySSLContext *self, PyObject *arg, void *c)
+ {
+     X509_STORE *store;
++    X509_VERIFY_PARAM *param;
+     unsigned long new_flags, flags, set, clear;
+ 
+     if (!PyArg_Parse(arg, "k", &new_flags))
+         return -1;
+     store = SSL_CTX_get_cert_store(self->ctx);
+-    flags = X509_VERIFY_PARAM_get_flags(store->param);
++    param = X509_STORE_get0_param(store);
++    flags = X509_VERIFY_PARAM_get_flags(param);
+     clear = flags & ~new_flags;
+     set = ~flags & new_flags;
+     if (clear) {
+-        if (!X509_VERIFY_PARAM_clear_flags(store->param, clear)) {
++        if (!X509_VERIFY_PARAM_clear_flags(param, clear)) {
+             _setSSLError(NULL, 0, __FILE__, __LINE__);
+             return -1;
+         }
+     }
+     if (set) {
+-        if (!X509_VERIFY_PARAM_set_flags(store->param, set)) {
++        if (!X509_VERIFY_PARAM_set_flags(param, set)) {
+             _setSSLError(NULL, 0, __FILE__, __LINE__);
+             return -1;
+         }
+@@ -2523,8 +2527,8 @@ load_cert_chain(PySSLContext *self, PyObject *args, PyObject *kwds)
+     char *kwlist[] = {"certfile", "keyfile", "password", NULL};
+     PyObject *keyfile = NULL, *keyfile_bytes = NULL, *password = NULL;
+     char *certfile_bytes = NULL;
+-    pem_password_cb *orig_passwd_cb = self->ctx->default_passwd_callback;
+-    void *orig_passwd_userdata = self->ctx->default_passwd_callback_userdata;
++    pem_password_cb *orig_passwd_cb = SSL_CTX_get_default_passwd_cb(self->ctx);
++    void *orig_passwd_userdata = SSL_CTX_get_default_passwd_cb_userdata(self->ctx);
+     _PySSLPasswordInfo pw_info = { NULL, NULL, NULL, 0, 0 };
+     int r;
+ 
+@@ -2660,8 +2664,8 @@ _add_ca_certs(PySSLContext *self, void *data, Py_ssize_t len,
+             cert = d2i_X509_bio(biobuf, NULL);
+         } else {
+             cert = PEM_read_bio_X509(biobuf, NULL,
+-                                     self->ctx->default_passwd_callback,
+-                                     self->ctx->default_passwd_callback_userdata);
++                                     SSL_CTX_get_default_passwd_cb(self->ctx),
++                                     SSL_CTX_get_default_passwd_cb_userdata(self->ctx));
+         }
+         if (cert == NULL) {
+             break;
+@@ -3148,25 +3152,24 @@ static PyObject *
+ cert_store_stats(PySSLContext *self)
+ {
+     X509_STORE *store;
++    STACK_OF(X509_OBJECT) *objs;
+     X509_OBJECT *obj;
+     int x509 = 0, crl = 0, pkey = 0, ca = 0, i;
+ 
+     store = SSL_CTX_get_cert_store(self->ctx);
+-    for (i = 0; i < sk_X509_OBJECT_num(store->objs); i++) {
+-        obj = sk_X509_OBJECT_value(store->objs, i);
+-        switch (obj->type) {
++    objs = X509_STORE_get0_objects(store); 
++    for (i = 0; i < sk_X509_OBJECT_num(objs); i++) {
++        obj = sk_X509_OBJECT_value(objs, i);
++        switch (X509_OBJECT_get_type(obj)) {
+             case X509_LU_X509:
+                 x509++;
+-                if (X509_check_ca(obj->data.x509)) {
++                if (X509_check_ca(X509_OBJECT_get0_X509(obj))) {
+                     ca++;
+                 }
+                 break;
+             case X509_LU_CRL:
+                 crl++;
+                 break;
+-            case X509_LU_PKEY:
+-                pkey++;
+-                break;
+             default:
+                 /* Ignore X509_LU_FAIL, X509_LU_RETRY, X509_LU_PKEY.
+                  * As far as I can tell they are internal states and never
+@@ -3191,6 +3194,7 @@ get_ca_certs(PySSLContext *self, PyObject *args, PyObject *kwds)
+ {
+     char *kwlist[] = {"binary_form", NULL};
+     X509_STORE *store;
++    STACK_OF(X509_OBJECT) *objs;
+     PyObject *ci = NULL, *rlist = NULL, *py_binary_mode = Py_False;
+     int i;
+     int binary_mode = 0;
+@@ -3209,17 +3213,18 @@ get_ca_certs(PySSLContext *self, PyObject *args, PyObject *kwds)
+     }
+ 
+     store = SSL_CTX_get_cert_store(self->ctx);
+-    for (i = 0; i < sk_X509_OBJECT_num(store->objs); i++) {
++    objs = X509_STORE_get0_objects(store);
++    for (i = 0; i < sk_X509_OBJECT_num(objs); i++) {
+         X509_OBJECT *obj;
+         X509 *cert;
+ 
+-        obj = sk_X509_OBJECT_value(store->objs, i);
+-        if (obj->type != X509_LU_X509) {
++        obj = sk_X509_OBJECT_value(objs, i);
++        if (X509_OBJECT_get_type(obj) != X509_LU_X509) {
+             /* not a x509 cert */
+             continue;
+         }
+         /* CA for any purpose */
+-        cert = obj->data.x509;
++        cert = X509_OBJECT_get0_X509(obj);
+         if (!X509_check_ca(cert)) {
+             continue;
+         }
