@@ -1,7 +1,7 @@
 %global package_speccommit 1850ba90c8fde75adac9c2b787d1326960b0be74
 %global usver 2.7.5
 %global xsver 92
-%global xsrel %{xsver}%{?xscount}%{?xshash}
+%global xsrel %{xsver}.1%{?xscount}%{?xshash}
 # ======================================================
 # Conditionals and other variables controlling the build
 # ======================================================
@@ -1049,10 +1049,9 @@ CheckPython() {
   pushd $ConfDir
 
   EXTRATESTOPTS="--verbose"
-EXTRATESTOPTS="$EXTRATESTOPTS -x test_httplib -x test_ssl -x test_urllib2_localnet "
   # skipping test_gdb on ppc64le until rhbz1260558 gets resolved
   %ifarch ppc64le
-    EXTRATESTOPTS="$EXTRATESTOPTS -x test_gdb -x "
+    EXTRATESTOPTS="$EXTRATESTOPTS -x test_gdb -x test_ftplib -x test_httplib test_ssl -x test_urllib2_localnet"
   %endif
 
 
@@ -1457,6 +1456,9 @@ rm -fr %{buildroot}
 # ======================================================
 
 %changelog
+* Fri Aug 29 2025 Yann Dirson <yann.dirson@vates.tech> - 2.7.5-92.1
+- Restore running same tests as el7, notably ssl ones
+
 * Thu Jan 02 2025 Deli Zhang <deli.zhang@cloud.com> - 2.7.5-92
 - CP-50325: Use new api of ncurses-devel
 - CP-50323: Replace deprecated functions
