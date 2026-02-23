@@ -1,0 +1,20 @@
+
+# HG changeset patch
+# User Vinay Sajip <vinay_sajip@yahoo.co.uk>
+# Date 1402737594 -3600
+# Node ID bb8b0c7fefd0c5ed99b3f336178a4f9554a1d0ef
+# Parent  31adcc4c43916f7448c9dd8048ad5be7e5bb6456
+Issue #21742: Set stream to None after closing.
+
+diff --git a/Lib/logging/handlers.py b/Lib/logging/handlers.py
+--- a/Lib/logging/handlers.py
++++ b/Lib/logging/handlers.py
+@@ -423,6 +423,7 @@ class WatchedFileHandler(logging.FileHan
+                 # we have an open file handle, clean it up
+                 self.stream.flush()
+                 self.stream.close()
++                self.stream = None  # See Issue #21742: _open () might fail.
+                 # open a new file handle and get new stat info from that fd
+                 self.stream = self._open()
+                 self._statstream()
+

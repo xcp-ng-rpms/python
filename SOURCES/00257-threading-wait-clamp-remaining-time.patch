@@ -1,0 +1,20 @@
+diff --git a/Lib/threading.py b/Lib/threading.py
+index e4c7f35..91b3849 100644
+--- a/Lib/threading.py
++++ b/Lib/threading.py
+@@ -351,13 +351,14 @@ class _Condition(_Verbose):
+                     gotit = waiter.acquire(0)
+                     if gotit:
+                         break
+-                    remaining = endtime - _time()
++                    remaining = min(endtime - _time(), timeout)
+                     if remaining <= 0:
+                         break
+                     if balancing:
+                         delay = min(delay * 2, remaining, 0.05)
+                     else:
+                         delay = remaining
++                        endtime = _time() + remaining
+                     _sleep(delay)
+                 if not gotit:
+                     if __debug__:

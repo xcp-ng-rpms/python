@@ -1,0 +1,166 @@
+
+# HG changeset patch
+# User Victor Stinner <victor.stinner@gmail.com>
+# Date 1406197344 -7200
+# Node ID 0177d8a4e82a613de0c64e747656c1d0b63e49b3
+# Parent  e70ab72286b470b7209b91d3aa8a21953aafb78f
+Issue #19884: readline: Disable the meta modifier key if stdout is not a
+terminal to not write the ANSI sequence "\033[1034h" into stdout. This sequence
+is used on some terminal (ex: TERM=xterm-256color") to enable support of 8 bit
+characters.
+
+diff --git a/Lib/test/test_readline.py b/Lib/test/test_readline.py
+--- a/Lib/test/test_readline.py
++++ b/Lib/test/test_readline.py
+@@ -1,17 +1,19 @@
+ """
+ Very minimal unittests for parts of the readline module.
+-
+-These tests were added to check that the libedit emulation on OSX and
+-the "real" readline have the same interface for history manipulation. That's
+-why the tests cover only a small subset of the interface.
+ """
++import os
+ import unittest
+ from test.test_support import run_unittest, import_module
++from test.script_helper import assert_python_ok
+ 
+ # Skip tests if there is no readline module
+ readline = import_module('readline')
+ 
+ class TestHistoryManipulation (unittest.TestCase):
++    """These tests were added to check that the libedit emulation on OSX and
++    the "real" readline have the same interface for history manipulation.
++    That's why the tests cover only a small subset of the interface.
++    """
+ 
+     @unittest.skipIf(not hasattr(readline, 'clear_history'),
+                      "The history update test cannot be run because the "
+@@ -40,8 +42,18 @@ class TestHistoryManipulation (unittest.
+         self.assertEqual(readline.get_current_history_length(), 1)
+ 
+ 
++class TestReadline(unittest.TestCase):
++    def test_init(self):
++        # Issue #19884: Ensure that the ANSI sequence "\033[1034h" is not
++        # written into stdout when the readline module is imported and stdout
++        # is redirected to a pipe.
++        rc, stdout, stderr = assert_python_ok('-c', 'import readline',
++                                              TERM='xterm-256color')
++        self.assertEqual(stdout, b'')
++
++
+ def test_main():
+-    run_unittest(TestHistoryManipulation)
++    run_unittest(TestHistoryManipulation, TestReadline)
+ 
+ if __name__ == "__main__":
+     test_main()
+diff --git a/Modules/readline.c b/Modules/readline.c
+--- a/Modules/readline.c
++++ b/Modules/readline.c
+@@ -887,7 +887,7 @@ setup_readline(void)
+ #endif
+ 
+ #ifdef __APPLE__
+-    /* the libedit readline emulation resets key bindings etc 
++    /* the libedit readline emulation resets key bindings etc
+      * when calling rl_initialize.  So call it upfront
+      */
+     if (using_libedit_emulation)
+@@ -932,6 +932,17 @@ setup_readline(void)
+ 
+     begidx = PyInt_FromLong(0L);
+     endidx = PyInt_FromLong(0L);
++
++    if (!isatty(STDOUT_FILENO)) {
++        /* Issue #19884: stdout is no a terminal. Disable meta modifier
++           keys to not write the ANSI sequence "\033[1034h" into stdout. On
++           terminals supporting 8 bit characters like TERM=xterm-256color
++           (which is now the default Fedora since Fedora 18), the meta key is
++           used to enable support of 8 bit characters (ANSI sequence
++           "\033[1034h"). */
++        rl_variable_bind ("enable-meta-key", "off");
++    }
++
+     /* Initialize (allows .inputrc to override)
+      *
+      * XXX: A bug in the readline-2.2 library causes a memory leak
+@@ -943,7 +954,7 @@ setup_readline(void)
+     else
+ #endif /* __APPLE__ */
+         rl_initialize();
+-    
++
+     RESTORE_LOCALE(saved_locale)
+ }
+ 
+
+
+# HG changeset patch
+# User Victor Stinner <victor.stinner@gmail.com>
+# Date 1406232681 -7200
+# Node ID f0ab6f9f06036dfacff09f22f86464840b50eb0a
+# Parent  d422062d7d366386acdb81851b0f2ec3a6f6750c
+Issue #19884, readline: calling rl_variable_bind ("enable-meta-key", "off")
+does crash on Mac OS X which uses libedit instead of readline.
+
+diff --git a/Modules/readline.c b/Modules/readline.c
+--- a/Modules/readline.c
++++ b/Modules/readline.c
+@@ -933,15 +933,19 @@ setup_readline(void)
+     begidx = PyInt_FromLong(0L);
+     endidx = PyInt_FromLong(0L);
+ 
++#ifndef __APPLE__
+     if (!isatty(STDOUT_FILENO)) {
+         /* Issue #19884: stdout is no a terminal. Disable meta modifier
+            keys to not write the ANSI sequence "\033[1034h" into stdout. On
+            terminals supporting 8 bit characters like TERM=xterm-256color
+            (which is now the default Fedora since Fedora 18), the meta key is
+            used to enable support of 8 bit characters (ANSI sequence
+-           "\033[1034h"). */
++           "\033[1034h").
++
++           With libedit, this call makes readline() crash. */
+         rl_variable_bind ("enable-meta-key", "off");
+     }
++#endif
+ 
+     /* Initialize (allows .inputrc to override)
+      *
+
+
+# HG changeset patch
+# User Antoine Pitrou <solipsis@pitrou.net>
+# Date 1415109130 -3600
+# Node ID eba6e68e818c694e499dfc4b22dde095d2557ab1
+# Parent  e54d0b197c8245bd29ea09f421e2f1da47370f41
+Issue #22773: fix failing test with old readline versions due to issue #19884.
+
+diff --git a/Lib/test/test_readline.py b/Lib/test/test_readline.py
+--- a/Lib/test/test_readline.py
++++ b/Lib/test/test_readline.py
+@@ -43,6 +43,10 @@ class TestHistoryManipulation (unittest.
+ 
+ 
+ class TestReadline(unittest.TestCase):
++
++    @unittest.skipIf(readline._READLINE_VERSION < 0x0600
++                     and "libedit" not in readline.__doc__,
++                     "not supported in this library version")
+     def test_init(self):
+         # Issue #19884: Ensure that the ANSI sequence "\033[1034h" is not
+         # written into stdout when the readline module is imported and stdout
+diff --git a/Modules/readline.c b/Modules/readline.c
+--- a/Modules/readline.c
++++ b/Modules/readline.c
+@@ -1184,4 +1184,7 @@ initreadline(void)
+ 
+     PyOS_ReadlineFunctionPointer = call_readline;
+     setup_readline();
++
++    PyModule_AddIntConstant(m, "_READLINE_VERSION", RL_READLINE_VERSION);
++    PyModule_AddIntConstant(m, "_READLINE_RUNTIME_VERSION", rl_readline_version);
+ }
+

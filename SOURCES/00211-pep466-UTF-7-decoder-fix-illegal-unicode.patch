@@ -1,0 +1,67 @@
+
+# HG changeset patch
+# User Serhiy Storchaka <storchaka@gmail.com>
+# Date 1382204269 -10800
+# Node ID 214c0aac7540947d88a38ff0061734547ef86710
+# Parent  c207ac413457a1b834e4b7dcf1a6836cd6e036e3
+Issue #19279: UTF-7 decoder no more produces illegal unicode strings.
+
+diff --git a/Lib/test/test_codecs.py b/Lib/test/test_codecs.py
+--- a/Lib/test/test_codecs.py
++++ b/Lib/test/test_codecs.py
+@@ -611,6 +611,35 @@ class UTF7Test(ReadTest):
+             ]
+         )
+ 
++    def test_errors(self):
++        tests = [
++            ('a\xffb', u'a\ufffdb'),
++            ('a+IK', u'a\ufffd'),
++            ('a+IK-b', u'a\ufffdb'),
++            ('a+IK,b', u'a\ufffdb'),
++            ('a+IKx', u'a\u20ac\ufffd'),
++            ('a+IKx-b', u'a\u20ac\ufffdb'),
++            ('a+IKwgr', u'a\u20ac\ufffd'),
++            ('a+IKwgr-b', u'a\u20ac\ufffdb'),
++            ('a+IKwgr,', u'a\u20ac\ufffd'),
++            ('a+IKwgr,-b', u'a\u20ac\ufffd-b'),
++            ('a+IKwgrB', u'a\u20ac\u20ac\ufffd'),
++            ('a+IKwgrB-b', u'a\u20ac\u20ac\ufffdb'),
++            ('a+/,+IKw-b', u'a\ufffd\u20acb'),
++            ('a+//,+IKw-b', u'a\ufffd\u20acb'),
++            ('a+///,+IKw-b', u'a\uffff\ufffd\u20acb'),
++            ('a+////,+IKw-b', u'a\uffff\ufffd\u20acb'),
++        ]
++        for raw, expected in tests:
++            self.assertRaises(UnicodeDecodeError, codecs.utf_7_decode,
++                              raw, 'strict', True)
++            self.assertEqual(raw.decode('utf-7', 'replace'), expected)
++
++    def test_nonbmp(self):
++        self.assertEqual(u'\U000104A0'.encode(self.encoding), '+2AHcoA-')
++        self.assertEqual(u'\ud801\udca0'.encode(self.encoding), '+2AHcoA-')
++        self.assertEqual('+2AHcoA-'.decode(self.encoding), u'\U000104A0')
++
+ class UTF16ExTest(unittest.TestCase):
+ 
+     def test_errors(self):
+diff --git a/Objects/unicodeobject.c b/Objects/unicodeobject.c
+--- a/Objects/unicodeobject.c
++++ b/Objects/unicodeobject.c
+@@ -1671,6 +1671,7 @@ PyObject *PyUnicode_DecodeUTF7Stateful(c
+                                        (base64buffer >> (base64bits-16));
+                     base64bits -= 16;
+                     base64buffer &= (1 << base64bits) - 1; /* clear high bits */
++                    assert(outCh <= 0xffff);
+                     if (surrogate) {
+                         /* expecting a second surrogate */
+                         if (outCh >= 0xDC00 && outCh <= 0xDFFF) {
+@@ -1737,6 +1738,7 @@ PyObject *PyUnicode_DecodeUTF7Stateful(c
+                 inShift = 1;
+                 shiftOutStart = p;
+                 base64bits = 0;
++                base64buffer = 0;
+             }
+         }
+         else if (DECODE_DIRECT(ch)) { /* character decodes as itself */
+

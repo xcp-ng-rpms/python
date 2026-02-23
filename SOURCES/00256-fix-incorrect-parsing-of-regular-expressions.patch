@@ -1,0 +1,80 @@
+diff --git a/Lib/sre_compile.py b/Lib/sre_compile.py
+index 7cda2b6..15d2324 100644
+--- a/Lib/sre_compile.py
++++ b/Lib/sre_compile.py
+@@ -355,8 +355,6 @@ def _optimize_unicode(charset, fixup):
+ def _simple(av):
+     # check if av is a "simple" operator
+     lo, hi = av[2].getwidth()
+-    if lo == 0 and hi == MAXREPEAT:
+-        raise error, "nothing to repeat"
+     return lo == hi == 1 and av[2][0][0] != SUBPATTERN
+ 
+ def _compile_info(code, pattern, flags):
+diff --git a/Lib/sre_parse.py b/Lib/sre_parse.py
+index 75f8c96..644441d 100644
+--- a/Lib/sre_parse.py
++++ b/Lib/sre_parse.py
+@@ -147,7 +147,7 @@ class SubPattern:
+         REPEATCODES = (MIN_REPEAT, MAX_REPEAT)
+         for op, av in self.data:
+             if op is BRANCH:
+-                i = sys.maxint
++                i = MAXREPEAT - 1
+                 j = 0
+                 for av in av[1]:
+                     l, h = av.getwidth()
+@@ -165,14 +165,14 @@ class SubPattern:
+                 hi = hi + j
+             elif op in REPEATCODES:
+                 i, j = av[2].getwidth()
+-                lo = lo + long(i) * av[0]
+-                hi = hi + long(j) * av[1]
++                lo = lo + i * av[0]
++                hi = hi + j * av[1]
+             elif op in UNITCODES:
+                 lo = lo + 1
+                 hi = hi + 1
+             elif op == SUCCESS:
+                 break
+-        self.width = int(min(lo, sys.maxint)), int(min(hi, sys.maxint))
++        self.width = min(lo, MAXREPEAT - 1), min(hi, MAXREPEAT)
+         return self.width
+ 
+ class Tokenizer:
+diff --git a/Lib/test/test_re.py b/Lib/test/test_re.py
+index 18a81a2..f0827d8 100644
+--- a/Lib/test/test_re.py
++++ b/Lib/test/test_re.py
+@@ -897,6 +897,17 @@ class ReTests(unittest.TestCase):
+         with self.assertRaisesRegexp(sre_constants.error, '\?foo'):
+             re.compile('(?P<?foo>)')
+ 
++    def test_bug_2537(self):
++        # issue 2537: empty submatches
++        for outer_op in ('{0,}', '*', '+', '{1,187}'):
++            for inner_op in ('{0,}', '*', '?'):
++                r = re.compile("^((x|y)%s)%s" % (inner_op, outer_op))
++                m = r.match("xyyzy")
++                self.assertEqual(m.group(0), "xyy")
++                self.assertEqual(m.group(1), "")
++                self.assertEqual(m.group(2), "y")
++
++
+ 
+ def run_re_tests():
+     from test.re_tests import tests, SUCCEED, FAIL, SYNTAX_ERROR
+diff --git a/Lib/doctest.py b/Lib/doctest.py
+index 90bcca1..0ee40a2 100644
+--- a/Lib/doctest.py
++++ b/Lib/doctest.py
+@@ -564,7 +564,7 @@ class DocTestParser:
+         # Want consists of any non-blank lines that do not start with PS1.
+         (?P<want> (?:(?![ ]*$)    # Not a blank line
+                      (?![ ]*>>>)  # Not a line starting with PS1
+-                     .*$\n?       # But any other line
++                     .+$\n?       # But any other line
+                   )*)
+         ''', re.MULTILINE | re.VERBOSE)
+ 
+

@@ -1,0 +1,226 @@
+From 90986ef48c0df602ab38aa831a24e99e9ed61e7e Mon Sep 17 00:00:00 2001
+From: Charalampos Stratakis <cstratak@redhat.com>
+Date: Mon, 4 Apr 2016 15:55:28 +0200
+Subject: [PATCH] JSON decoder now accepts lone surrogates
+
+---
+ Lib/json/decoder.py               | 35 ++++++++++++------------
+ Lib/json/tests/test_scanstring.py | 56 ++++++++++++++++++++++++++++++++++++---
+ Modules/_json.c                   | 49 +++++++++-------------------------
+ 3 files changed, 83 insertions(+), 57 deletions(-)
+
+diff --git a/Lib/json/decoder.py b/Lib/json/decoder.py
+index dfcc628..1b43238 100644
+--- a/Lib/json/decoder.py
++++ b/Lib/json/decoder.py
+@@ -62,6 +62,16 @@ BACKSLASH = {
+
+ DEFAULT_ENCODING = "utf-8"
+
++def _decode_uXXXX(s, pos):
++    esc = s[pos + 1:pos + 5]
++    if len(esc) == 4 and esc[1] not in 'xX':
++        try:
++            return int(esc, 16)
++        except ValueError:
++            pass
++    msg = "Invalid \\uXXXX escape"
++    raise ValueError(errmsg(msg, s, pos))
++
+ def py_scanstring(s, end, encoding=None, strict=True,
+         _b=BACKSLASH, _m=STRINGCHUNK.match):
+     """Scan the string s for a JSON string. End is the index of the
+@@ -116,25 +126,16 @@ def py_scanstring(s, end, encoding=None, strict=True,
+             end += 1
+         else:
+             # Unicode escape sequence
+-            esc = s[end + 1:end + 5]
+-            next_end = end + 5
+-            if len(esc) != 4:
+-                msg = "Invalid \\uXXXX escape"
+-                raise ValueError(errmsg(msg, s, end))
+-            uni = int(esc, 16)
++            uni = _decode_uXXXX(s, end)
++            end += 5
+             # Check for surrogate pair on UCS-4 systems
+-            if 0xd800 <= uni <= 0xdbff and sys.maxunicode > 65535:
+-                msg = "Invalid \\uXXXX\\uXXXX surrogate pair"
+-                if not s[end + 5:end + 7] == '\\u':
+-                    raise ValueError(errmsg(msg, s, end))
+-                esc2 = s[end + 7:end + 11]
+-                if len(esc2) != 4:
+-                    raise ValueError(errmsg(msg, s, end))
+-                uni2 = int(esc2, 16)
+-                uni = 0x10000 + (((uni - 0xd800) << 10) | (uni2 - 0xdc00))
+-                next_end += 6
++            if sys.maxunicode > 65535 and \
++               0xd800 <= uni <= 0xdbff and s[end:end + 2] == '\\u':
++                uni2 = _decode_uXXXX(s, end + 1)
++                if 0xdc00 <= uni2 <= 0xdfff:
++                    uni = 0x10000 + (((uni - 0xd800) << 10) | (uni2 - 0xdc00))
++                    end += 6
+             char = unichr(uni)
+-            end = next_end
+         # Append the unescaped character
+         _append(char)
+     return u''.join(chunks), end
+diff --git a/Lib/json/tests/test_scanstring.py b/Lib/json/tests/test_scanstring.py
+index 4fef8cb..ed80a41 100644
+--- a/Lib/json/tests/test_scanstring.py
++++ b/Lib/json/tests/test_scanstring.py
+@@ -5,10 +5,6 @@ from json.tests import PyTest, CTest
+ class TestScanstring(object):
+     def test_scanstring(self):
+         scanstring = self.json.decoder.scanstring
+-        self.assertEqual(
+-            scanstring('"z\\ud834\\udd20x"', 1, None, True),
+-            (u'z\U0001d120x', 16))
+-
+         if sys.maxunicode == 65535:
+             self.assertEqual(
+                 scanstring(u'"z\U0001d120x"', 1, None, True),
+@@ -94,6 +90,58 @@ class TestScanstring(object):
+             scanstring('["Bad value", truth]', 2, None, True),
+             (u'Bad value', 12))
+
++    def test_surrogates(self):
++        scanstring = self.json.decoder.scanstring
++        def assertScan(given, expect):
++            self.assertEqual(scanstring(given, 1, None, True),
++                             (expect, len(given)))
++            if not isinstance(given, unicode):
++                given = unicode(given)
++                self.assertEqual(scanstring(given, 1, None, True),
++                                 (expect, len(given)))
++
++        surrogates = unichr(0xd834) + unichr(0xdd20)
++        assertScan('"z\\ud834\\u0079x"', u'z\ud834yx')
++        assertScan('"z\\ud834\\udd20x"', u'z\U0001d120x')
++        assertScan('"z\\ud834\\ud834\\udd20x"', u'z\ud834\U0001d120x')
++        assertScan('"z\\ud834x"', u'z\ud834x')
++        assertScan(u'"z\\ud834\udd20x12345"', u'z%sx12345' % surrogates)
++        assertScan('"z\\udd20x"', u'z\udd20x')
++        assertScan(u'"z\ud834\udd20x"', u'z\ud834\udd20x')
++        assertScan(u'"z\ud834\\udd20x"', u'z%sx' % surrogates)
++        assertScan(u'"z\ud834x"', u'z\ud834x')
++
++    def test_bad_escapes(self):
++        scanstring = self.json.decoder.scanstring
++        bad_escapes = [
++            '"\\"',
++            '"\\x"',
++            '"\\u"',
++            '"\\u0"',
++            '"\\u01"',
++            '"\\u012"',
++            '"\\uz012"',
++            '"\\u0z12"',
++            '"\\u01z2"',
++            '"\\u012z"',
++            '"\\u0x12"',
++            '"\\u0X12"',
++            '"\\ud834\\"',
++            '"\\ud834\\u"',
++            '"\\ud834\\ud"',
++            '"\\ud834\\udd"',
++            '"\\ud834\\udd2"',
++            '"\\ud834\\uzdd2"',
++            '"\\ud834\\udzd2"',
++            '"\\ud834\\uddz2"',
++            '"\\ud834\\udd2z"',
++            '"\\ud834\\u0x20"',
++            '"\\ud834\\u0X20"',
++        ]
++        for s in bad_escapes:
++            with self.assertRaises(ValueError):
++                scanstring(s, 1, None, True)
++
+     def test_issue3623(self):
+         self.assertRaises(ValueError, self.json.decoder.scanstring, b"xxx", 1,
+                           "xxx")
+diff --git a/Modules/_json.c b/Modules/_json.c
+index 7c925fd..56d9ee4 100644
+--- a/Modules/_json.c
++++ b/Modules/_json.c
+@@ -524,16 +524,10 @@ scanstring_str(PyObject *pystr, Py_ssize_t end, char *encoding, int strict, Py_s
+             }
+ #ifdef Py_UNICODE_WIDE
+             /* Surrogate pair */
+-            if ((c & 0xfc00) == 0xd800) {
++            if ((c & 0xfc00) == 0xd800 && end + 6 < len &&
++                buf[next++] == '\\' &&
++                buf[next++] == 'u') {
+                 Py_UNICODE c2 = 0;
+-                if (end + 6 >= len) {
+-                    raise_errmsg("Unpaired high surrogate", pystr, end - 5);
+-                    goto bail;
+-                }
+-                if (buf[next++] != '\\' || buf[next++] != 'u') {
+-                    raise_errmsg("Unpaired high surrogate", pystr, end - 5);
+-                    goto bail;
+-                }
+                 end += 6;
+                 /* Decode 4 hex digits */
+                 for (; next < end; next++) {
+@@ -554,15 +548,10 @@ scanstring_str(PyObject *pystr, Py_ssize_t end, char *encoding, int strict, Py_s
+                             goto bail;
+                     }
+                 }
+-                if ((c2 & 0xfc00) != 0xdc00) {
+-                    raise_errmsg("Unpaired high surrogate", pystr, end - 5);
+-                    goto bail;
+-                }
+-                c = 0x10000 + (((c - 0xd800) << 10) | (c2 - 0xdc00));
+-            }
+-            else if ((c & 0xfc00) == 0xdc00) {
+-                raise_errmsg("Unpaired low surrogate", pystr, end - 5);
+-                goto bail;
++                if ((c2 & 0xfc00) == 0xdc00)
++                    c = 0x10000 + (((c - 0xd800) << 10) | (c2 - 0xdc00));
++                else
++                    end -= 6;
+             }
+ #endif
+         }
+@@ -703,16 +692,9 @@ scanstring_unicode(PyObject *pystr, Py_ssize_t end, int strict, Py_ssize_t *next
+             }
+ #ifdef Py_UNICODE_WIDE
+             /* Surrogate pair */
+-            if ((c & 0xfc00) == 0xd800) {
++            if ((c & 0xfc00) == 0xd800 && end + 6 < len &&
++                buf[next++] == '\\' && buf[next++] == 'u') {
+                 Py_UNICODE c2 = 0;
+-                if (end + 6 >= len) {
+-                    raise_errmsg("Unpaired high surrogate", pystr, end - 5);
+-                    goto bail;
+-                }
+-                if (buf[next++] != '\\' || buf[next++] != 'u') {
+-                    raise_errmsg("Unpaired high surrogate", pystr, end - 5);
+-                    goto bail;
+-                }
+                 end += 6;
+                 /* Decode 4 hex digits */
+                 for (; next < end; next++) {
+@@ -733,15 +715,10 @@ scanstring_unicode(PyObject *pystr, Py_ssize_t end, int strict, Py_ssize_t *next
+                             goto bail;
+                     }
+                 }
+-                if ((c2 & 0xfc00) != 0xdc00) {
+-                    raise_errmsg("Unpaired high surrogate", pystr, end - 5);
+-                    goto bail;
+-                }
+-                c = 0x10000 + (((c - 0xd800) << 10) | (c2 - 0xdc00));
+-            }
+-            else if ((c & 0xfc00) == 0xdc00) {
+-                raise_errmsg("Unpaired low surrogate", pystr, end - 5);
+-                goto bail;
++                if ((c2 & 0xfc00) == 0xdc00)
++                    c = 0x10000 + (((c - 0xd800) << 10) | (c2 - 0xdc00));
++                else
++                    end -= 6;
+             }
+ #endif
+         }
+--
+2.5.5
+

@@ -1,0 +1,40 @@
+
+# HG changeset patch
+# User Serhiy Storchaka <storchaka@gmail.com>
+# Date 1372008129 -10800
+# Node ID 2f1e8b7fa534b147280fdc9b92e44a7c7305338a
+# Parent  8f0adcb66633ee97e4f7bdeee2104268113b86c3
+Issue #18184: PyUnicode_FromFormat() and PyUnicode_FromFormatV() now raise
+OverflowError when an argument of %c format is out of range.
+
+diff --git a/Objects/unicodeobject.c b/Objects/unicodeobject.c
+--- a/Objects/unicodeobject.c
++++ b/Objects/unicodeobject.c
+@@ -740,8 +740,25 @@ PyUnicode_FromFormatV(const char *format
+ 
+             switch (*f) {
+             case 'c':
+-                (void)va_arg(count, int);
++            {
++                int ordinal = va_arg(count, int);
++#ifdef Py_UNICODE_WIDE
++                if (ordinal < 0 || ordinal > 0x10ffff) {
++                    PyErr_SetString(PyExc_OverflowError,
++                                    "%c arg not in range(0x110000) "
++                                    "(wide Python build)");
++                    goto fail;
++                }
++#else
++                if (ordinal < 0 || ordinal > 0xffff) {
++                    PyErr_SetString(PyExc_OverflowError,
++                                    "%c arg not in range(0x10000) "
++                                    "(narrow Python build)");
++                    goto fail;
++                }
++#endif
+                 /* fall through... */
++            }
+             case '%':
+                 n++;
+                 break;
+

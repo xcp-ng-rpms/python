@@ -1,0 +1,22 @@
+diff --git a/setup.py b/setup.py
+index 3b2f09259da9..3833261b6418 100644
+--- a/setup.py
++++ b/setup.py
+@@ -812,7 +812,7 @@ class PyBuildExt(build_ext):
+         # find out which version of OpenSSL we have
+         openssl_ver = 0
+         openssl_ver_re = re.compile(
+-            '^\s*#\s*define\s+OPENSSL_VERSION_NUMBER\s+(0x[0-9a-fA-F]+)' )
++            '^\s*#\s*define\s+OPENSSL_VERSION_MAJOR\s+([0-9a-fA-F]+)' )
+ 
+         # look for the openssl version header on the compiler search path.
+         opensslv_h = find_file('openssl/opensslv.h', [],
+@@ -831,7 +831,7 @@ class PyBuildExt(build_ext):
+                 print "IOError while reading opensshv.h:", msg
+                 pass
+ 
+-        min_openssl_ver = 0x00907000
++        min_openssl_ver = 3
+         have_any_openssl = ssl_incs is not None and ssl_libs is not None
+         have_usable_openssl = (have_any_openssl and
+                                openssl_ver >= min_openssl_ver)

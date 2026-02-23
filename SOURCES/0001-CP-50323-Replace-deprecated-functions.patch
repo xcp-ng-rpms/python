@@ -1,0 +1,67 @@
+From 54b80d8ca4d9b68220fede430fb29437c879a7a9 Mon Sep 17 00:00:00 2001
+From: Deli Zhang <deli.zhang@citrix.com>
+Date: Wed, 21 Aug 2024 06:45:27 +0000
+Subject: [PATCH] CP-50323: Replace deprecated functions
+
+ERR_func_error_string, HMAC_* and TLSv1*_method are still used in
+python3 master branch, so can not replace completely.
+
+Signed-off-by: Deli Zhang <deli.zhang@citrix.com>
+---
+ Modules/_ssl.c | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/Modules/_ssl.c b/Modules/_ssl.c
+index 3240039..6a153b8 100644
+--- a/Modules/_ssl.c
++++ b/Modules/_ssl.c
+@@ -481,7 +481,6 @@ newPySSLSocket(PySSLContext *sslctx, PySocketSockObject *sock,
+     Py_INCREF(sslctx);
+ 
+     /* Make sure the SSL error state is initialized */
+-    (void) ERR_get_state();
+     ERR_clear_error();
+ 
+     PySSL_BEGIN_ALLOW_THREADS
+@@ -901,7 +900,7 @@ _get_peer_alt_names (X509 *certificate) {
+                     goto fail;
+                 }
+                 PyTuple_SET_ITEM(t, 0, v);
+-                v = PyString_FromStringAndSize((char *)ASN1_STRING_data(as),
++                v = PyString_FromStringAndSize((char *)ASN1_STRING_get0_data(as),
+                                                ASN1_STRING_length(as));
+                 if (v == NULL) {
+                     Py_DECREF(t);
+@@ -2972,7 +2971,6 @@ set_ecdh_curve(PySSLContext *self, PyObject *name)
+ {
+     char *name_bytes;
+     int nid;
+-    EC_KEY *key;
+ 
+     name_bytes = PyBytes_AsString(name);
+     if (!name_bytes) {
+@@ -2984,13 +2982,20 @@ set_ecdh_curve(PySSLContext *self, PyObject *name)
+                      "unknown elliptic curve name %R", name);
+         return NULL;
+     }
+-    key = EC_KEY_new_by_curve_name(nid);
++#if OPENSSL_VERSION_MAJOR < 3
++    EC_KEY *key = EC_KEY_new_by_curve_name(nid);
+     if (key == NULL) {
+         _setSSLError(NULL, 0, __FILE__, __LINE__);
+         return NULL;
+     }
+     SSL_CTX_set_tmp_ecdh(self->ctx, key);
+     EC_KEY_free(key);
++#else
++    if (!SSL_CTX_set1_groups(self->ctx, &nid, 1)) {
++        _setSSLError(NULL, 0, __FILE__, __LINE__);
++        return NULL;
++    }
++#endif
+     Py_RETURN_NONE;
+ }
+ #endif
+-- 
+2.43.0
+

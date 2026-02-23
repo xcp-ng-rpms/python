@@ -1,0 +1,26 @@
+diff --git a/Modules/_ssl.c b/Modules/_ssl.c
+index c7bea36c474e..04033c7aca09 100644
+--- a/Modules/_ssl.c
++++ b/Modules/_ssl.c
+@@ -93,11 +93,8 @@ struct py_ssl_library_code {
+ /* Openssl comes with TLSv1.1 and TLSv1.2 between 1.0.0h and 1.0.1
+     http://www.openssl.org/news/changelog.html
+  */
+-#if OPENSSL_VERSION_NUMBER >= 0x10001000L
+ # define HAVE_TLSv1_2 1
+-#else
+-# define HAVE_TLSv1_2 0
+-#endif
++# define OPENSSL_NO_SSL2 1
+ 
+ /* SNI support (client- and server-side) appeared in OpenSSL 1.0.0 and 0.9.8f
+  * This includes the SSL_set_SSL_CTX() function.
+@@ -2055,7 +2052,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+ {
+     char *kwlist[] = {"protocol", NULL};
+     PySSLContext *self;
+-    int proto_version = PY_SSL_VERSION_SSL23;
++    int proto_version = PY_SSL_VERSION_TLS1_2;
+     long options;
+     SSL_CTX *ctx = NULL;
+ 

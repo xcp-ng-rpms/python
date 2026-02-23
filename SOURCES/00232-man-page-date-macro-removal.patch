@@ -1,0 +1,9 @@
+diff -r 62e3b7af0697 -r db8d7f376d24 Misc/python.man
+--- a/Misc/python.man	Mon Mar 21 10:38:58 2016 +0100
++++ b/Misc/python.man	Mon Mar 21 13:54:28 2016 +0100
+@@ -1,4 +1,4 @@
+-.TH PYTHON "1" "$Date$"
++.TH PYTHON "1"
+ 
+ .\" To view this file while editing, run it through groff:
+ .\"   groff -Tascii -man python.man | less

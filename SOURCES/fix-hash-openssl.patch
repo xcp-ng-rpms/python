@@ -1,0 +1,297 @@
+diff --git a/Modules/_hashopenssl.c b/Modules/_hashopenssl.c
+index f358e0c0dbb6..dee6c21294a0 100644
+--- a/Modules/_hashopenssl.c
++++ b/Modules/_hashopenssl.c
+@@ -59,7 +59,7 @@
+ typedef struct {
+     PyObject_HEAD
+     PyObject            *name;  /* name of this hash algorithm */
+-    EVP_MD_CTX          ctx;    /* OpenSSL message digest context */
++    EVP_MD_CTX          *ctx;    /* OpenSSL message digest context */
+ #ifdef WITH_THREAD
+     PyThread_type_lock  lock;   /* OpenSSL context lock */
+ #endif
+@@ -72,7 +72,7 @@ static PyTypeObject EVPtype;
+    We have one of these per algorithm */
+ typedef struct {
+     PyObject *name_obj;
+-    EVP_MD_CTX ctxs[2];
++    EVP_MD_CTX *ctxs[2];
+     /* ctx_ptrs will point to ctxs unless an error occurred, when it will
+        be NULL: */
+     EVP_MD_CTX *ctx_ptrs[2];
+@@ -101,6 +101,11 @@ newEVPobject(PyObject *name)
+     if (retval != NULL) {
+         Py_INCREF(name);
+         retval->name = name;
++	retval->ctx = EVP_MD_CTX_new();
++        if (retval->ctx == NULL) {
++            PyErr_NoMemory();
++        }
++
+ #ifdef WITH_THREAD
+         retval->lock = NULL;
+ #endif
+@@ -120,7 +125,7 @@ EVP_hash(EVPobject *self, const void *vp, Py_ssize_t len)
+             process = MUNCH_SIZE;
+         else
+             process = Py_SAFE_DOWNCAST(len, Py_ssize_t, unsigned int);
+-        EVP_DigestUpdate(&self->ctx, (const void*)cp, process);
++        EVP_DigestUpdate(self->ctx, (const void*)cp, process);
+         len -= process;
+         cp += process;
+     }
+@@ -130,6 +135,7 @@ static void
+ mc_ctx_init(EVP_MD_CTX *ctx, int usedforsecurity)
+ {
+     EVP_MD_CTX_init(ctx);
++#undef EVP_MD_CTX_FLAG_NON_FIPS_ALLOW
+ 
+     /*
+       If the user has declared that this digest is being used in a
+@@ -177,7 +183,7 @@ EVP_dealloc(EVPobject *self)
+     if (self->lock != NULL)
+         PyThread_free_lock(self->lock);
+ #endif
+-    EVP_MD_CTX_cleanup(&self->ctx);
++    EVP_MD_CTX_free(self->ctx);
+     Py_XDECREF(self->name);
+     PyObject_Del(self);
+ }
+@@ -185,7 +191,7 @@ EVP_dealloc(EVPobject *self)
+ static void locked_EVP_MD_CTX_copy(EVP_MD_CTX *new_ctx_p, EVPobject *self)
+ {
+     ENTER_HASHLIB(self);
+-    EVP_MD_CTX_copy(new_ctx_p, &self->ctx);
++    EVP_MD_CTX_copy(new_ctx_p, self->ctx);
+     LEAVE_HASHLIB(self);
+ }
+ 
+@@ -202,7 +208,7 @@ EVP_copy(EVPobject *self, PyObject *unused)
+     if ( (newobj = newEVPobject(self->name))==NULL)
+         return NULL;
+ 
+-    locked_EVP_MD_CTX_copy(&newobj->ctx, self);
++    locked_EVP_MD_CTX_copy(newobj->ctx, self);
+     return (PyObject *)newobj;
+ }
+ 
+@@ -213,16 +219,21 @@ static PyObject *
+ EVP_digest(EVPobject *self, PyObject *unused)
+ {
+     unsigned char digest[EVP_MAX_MD_SIZE];
+-    EVP_MD_CTX temp_ctx;
++    EVP_MD_CTX* temp_ctx;
+     PyObject *retval;
+     unsigned int digest_size;
+ 
+-    locked_EVP_MD_CTX_copy(&temp_ctx, self);
+-    digest_size = EVP_MD_CTX_size(&temp_ctx);
+-    EVP_DigestFinal(&temp_ctx, digest, NULL);
++    temp_ctx = EVP_MD_CTX_new();
++    if (temp_ctx == NULL) {
++        PyErr_NoMemory();
++        return NULL;
++    }
++    locked_EVP_MD_CTX_copy(temp_ctx, self);
++    digest_size = EVP_MD_CTX_size(temp_ctx);
++    EVP_DigestFinal(temp_ctx, digest, NULL);
+ 
+     retval = PyString_FromStringAndSize((const char *)digest, digest_size);
+-    EVP_MD_CTX_cleanup(&temp_ctx);
++    EVP_MD_CTX_free(temp_ctx);
+     return retval;
+ }
+ 
+@@ -233,17 +244,22 @@ static PyObject *
+ EVP_hexdigest(EVPobject *self, PyObject *unused)
+ {
+     unsigned char digest[EVP_MAX_MD_SIZE];
+-    EVP_MD_CTX temp_ctx;
++    EVP_MD_CTX *temp_ctx;
+     PyObject *retval;
+     char *hex_digest;
+     unsigned int i, j, digest_size;
+ 
++    temp_ctx = EVP_MD_CTX_new();
++    if (temp_ctx == NULL) {
++        PyErr_NoMemory();
++        return NULL;
++    }
+     /* Get the raw (binary) digest value */
+-    locked_EVP_MD_CTX_copy(&temp_ctx, self);
+-    digest_size = EVP_MD_CTX_size(&temp_ctx);
+-    EVP_DigestFinal(&temp_ctx, digest, NULL);
++    locked_EVP_MD_CTX_copy(temp_ctx, self);
++    digest_size = EVP_MD_CTX_size(temp_ctx);
++    EVP_DigestFinal(temp_ctx, digest, NULL);
+ 
+-    EVP_MD_CTX_cleanup(&temp_ctx);
++    EVP_MD_CTX_free(temp_ctx);
+ 
+     /* Create a new string */
+     /* NOTE: not thread safe! modifying an already created string object */
+@@ -317,7 +333,7 @@ static PyObject *
+ EVP_get_block_size(EVPobject *self, void *closure)
+ {
+     long block_size;
+-    block_size = EVP_MD_CTX_block_size(&self->ctx);
++    block_size = EVP_MD_CTX_block_size(self->ctx);
+     return PyLong_FromLong(block_size);
+ }
+ 
+@@ -325,7 +341,7 @@ static PyObject *
+ EVP_get_digest_size(EVPobject *self, void *closure)
+ {
+     long size;
+-    size = EVP_MD_CTX_size(&self->ctx);
++    size = EVP_MD_CTX_size(self->ctx);
+     return PyLong_FromLong(size);
+ }
+ 
+@@ -390,8 +406,8 @@ EVP_tp_init(EVPobject *self, PyObject *args, PyObject *kwds)
+         PyBuffer_Release(&view);
+         return -1;
+     }
+-    mc_ctx_init(&self->ctx, usedforsecurity);
+-    if (!EVP_DigestInit_ex(&self->ctx, digest, NULL)) {
++    mc_ctx_init(self->ctx, usedforsecurity);
++    if (!EVP_DigestInit_ex(self->ctx, digest, NULL)) {
+         set_evp_exception();
+         PyBuffer_Release(&view);
+         return -1;
+@@ -493,10 +509,10 @@ EVPnew(PyObject *name_obj,
+         return NULL;
+ 
+     if (initial_ctx) {
+-        EVP_MD_CTX_copy(&self->ctx, initial_ctx);
++        EVP_MD_CTX_copy(self->ctx, initial_ctx);
+     } else {
+-        mc_ctx_init(&self->ctx, usedforsecurity);
+-        if (!EVP_DigestInit_ex(&self->ctx, digest, NULL)) {
++        mc_ctx_init(self->ctx, usedforsecurity);
++        if (!EVP_DigestInit_ex(self->ctx, digest, NULL)) {
+             set_evp_exception();
+             Py_DECREF(self);
+             return NULL;
+@@ -590,18 +606,23 @@ PKCS5_PBKDF2_HMAC_fast(const char *pass, int passlen,
+     unsigned char digtmp[EVP_MAX_MD_SIZE], *p, itmp[4];
+     int cplen, j, k, tkeylen, mdlen;
+     unsigned long i = 1;
+-    HMAC_CTX hctx_tpl, hctx;
++    HMAC_CTX *hctx_tpl, *hctx;
+ 
+     mdlen = EVP_MD_size(digest);
+     if (mdlen < 0)
+         return 0;
+ 
+-    HMAC_CTX_init(&hctx_tpl);
+-    HMAC_CTX_init(&hctx);
++    hctx_tpl = HMAC_CTX_new();
++    hctx = HMAC_CTX_new();
++    if (hctx == NULL || hctx_tpl == NULL) {
++        PyErr_NoMemory();
++        return 0;
++    }
+     p = out;
+     tkeylen = keylen;
+-    if (!HMAC_Init_ex(&hctx_tpl, pass, passlen, digest, NULL)) {
+-        HMAC_CTX_cleanup(&hctx_tpl);
++    if (!HMAC_Init_ex(hctx_tpl, pass, passlen, digest, NULL)) {
++        HMAC_CTX_free(hctx_tpl);
++        HMAC_CTX_free(hctx);
+         return 0;
+     }
+     while(tkeylen) {
+@@ -616,31 +637,31 @@ PKCS5_PBKDF2_HMAC_fast(const char *pass, int passlen,
+         itmp[1] = (unsigned char)((i >> 16) & 0xff);
+         itmp[2] = (unsigned char)((i >> 8) & 0xff);
+         itmp[3] = (unsigned char)(i & 0xff);
+-        if (!HMAC_CTX_copy(&hctx, &hctx_tpl)) {
+-            HMAC_CTX_cleanup(&hctx_tpl);
++        if (!HMAC_CTX_copy(hctx, hctx_tpl)) {
++            HMAC_CTX_free(hctx_tpl);
++            HMAC_CTX_free(hctx);
+             return 0;
+         }
+-        if (!HMAC_Update(&hctx, salt, saltlen)
+-                || !HMAC_Update(&hctx, itmp, 4)
+-                || !HMAC_Final(&hctx, digtmp, NULL)) {
+-            HMAC_CTX_cleanup(&hctx_tpl);
+-            HMAC_CTX_cleanup(&hctx);
++        if (!HMAC_Update(hctx, salt, saltlen)
++                || !HMAC_Update(hctx, itmp, 4)
++                || !HMAC_Final(hctx, digtmp, NULL)) {
++            HMAC_CTX_free(hctx_tpl);
++            HMAC_CTX_free(hctx);
+             return 0;
+         }
+-        HMAC_CTX_cleanup(&hctx);
+         memcpy(p, digtmp, cplen);
+         for (j = 1; j < iter; j++) {
+-            if (!HMAC_CTX_copy(&hctx, &hctx_tpl)) {
+-                HMAC_CTX_cleanup(&hctx_tpl);
++            if (!HMAC_CTX_copy(hctx, hctx_tpl)) {
++                HMAC_CTX_free(hctx_tpl);
++                HMAC_CTX_free(hctx);
+                 return 0;
+             }
+-            if (!HMAC_Update(&hctx, digtmp, mdlen)
+-                    || !HMAC_Final(&hctx, digtmp, NULL)) {
+-                HMAC_CTX_cleanup(&hctx_tpl);
+-                HMAC_CTX_cleanup(&hctx);
++            if (!HMAC_Update(hctx, digtmp, mdlen)
++                    || !HMAC_Final(hctx, digtmp, NULL)) {
++                HMAC_CTX_free(hctx_tpl);
++                HMAC_CTX_free(hctx);
+                 return 0;
+             }
+-            HMAC_CTX_cleanup(&hctx);
+             for (k = 0; k < cplen; k++) {
+                 p[k] ^= digtmp[k];
+             }
+@@ -649,7 +670,8 @@ PKCS5_PBKDF2_HMAC_fast(const char *pass, int passlen,
+         i++;
+         p+= cplen;
+     }
+-    HMAC_CTX_cleanup(&hctx_tpl);
++    HMAC_CTX_free(hctx_tpl);
++    HMAC_CTX_free(hctx);
+     return 1;
+ }
+ 
+@@ -764,10 +786,10 @@ pbkdf2_hmac(PyObject *self, PyObject *args, PyObject *kwdict)
+     key = PyBytes_AS_STRING(key_obj);
+ 
+     Py_BEGIN_ALLOW_THREADS
+-    retval = PKCS5_PBKDF2_HMAC_fast((char*)password.buf, (int)password.len,
+-                                    (unsigned char *)salt.buf, (int)salt.len,
+-                                    iterations, digest, dklen,
+-                                    (unsigned char *)key);
++    retval = PKCS5_PBKDF2_HMAC((char*)password.buf, (int)password.len,
++                               (unsigned char *)salt.buf, (int)salt.len,
++                               iterations, digest, dklen,
++                               (unsigned char *)key);
+     Py_END_ALLOW_THREADS
+ 
+     if (!retval) {
+@@ -931,11 +953,16 @@ init_constructor_constant(EVPCachedInfo *cached_info, const char *name)
+     if (EVP_get_digestbyname(name)) {
+         int i;
+         for (i=0; i<2; i++) {
+-            mc_ctx_init(&cached_info->ctxs[i], i);
+-            if (EVP_DigestInit_ex(&cached_info->ctxs[i],
++            cached_info->ctxs[i] =  EVP_MD_CTX_new();
++            if (cached_info->ctxs[i] == NULL) {
++                PyErr_NoMemory();
++            }
++
++            mc_ctx_init(cached_info->ctxs[i], i);
++            if (EVP_DigestInit_ex(cached_info->ctxs[i],
+                                   EVP_get_digestbyname(name), NULL)) {
+                 /* Success: */
+-                cached_info->ctx_ptrs[i] = &cached_info->ctxs[i];
++                cached_info->ctx_ptrs[i] = cached_info->ctxs[i];
+             } else {
+                 /* Failure: */
+                 cached_info->ctx_ptrs[i] = NULL;
