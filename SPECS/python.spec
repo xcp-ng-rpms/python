@@ -1054,24 +1054,6 @@ CheckPython() {
     EXTRATESTOPTS="$EXTRATESTOPTS -x test_gdb -x test_ftplib -x test_httplib test_ssl -x test_urllib2_localnet"
   %endif
 
-  # With the update to openssl 3.5, the `test_ssl` and `test_poplib` tests started to
-  # hang indefinitely. This is due to the threaded servers in those modules no longer
-  # answering requests due to the keys in the test certificates being too small. As a
-  # workaround, we allow 1024-bit test certificates specifically for the python tests.
-  # This is done by creating a temporary configuration to lower the security level, i.e.
-  # setting `SECLEVEL` to 0. Note that this does not fix all the tests in those two
-  # test modules: some tests were already failing before but the status of the python
-  # test runs are ignored.
-  cat << 'EOF' > $ConfDir/openssl_legacy.cnf
-openssl_conf = default_conf
-[default_conf]
-ssl_conf = ssl_sect
-[ssl_sect]
-system_default = system_default_sect
-[system_default_sect]
-CipherString = DEFAULT@SECLEVEL=0
-EOF
-  export OPENSSL_CONF=$ConfDir/openssl_legacy.cnf
 
 %if 0%{?with_huntrleaks}
   # Try to detect reference leaks on debug builds.  By default this means
@@ -1473,8 +1455,6 @@ rm -fr %{buildroot}
 # Finally, the changelog:
 # ======================================================
 
-# Changes since the last build, to fold into the next changelog entry:
-# - Lower the security level during the python regression tests to allow for small keys
 %changelog
 * Fri Aug 29 2025 Yann Dirson <yann.dirson@vates.tech> - 2.7.5-92.1
 - Restore running same tests as el7, notably ssl ones
